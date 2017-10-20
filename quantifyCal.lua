@@ -111,16 +111,40 @@ function excludeVols(inSc, outSc, maxVol)
   print('# of bubbles: ' .. nBubbles)
   local volTemp
   
+  wm.Scan[outSc] = wm.Scan[1]:copy()
   for i = 1,nBubbles do
     volTemp = labels:volume(i,i).value
+    if volTemp<maxVol then
+      
+      AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
+      local tCent = field:new()
+      AVS:FIELD_CENTER_DOT(temp, tCent)
+      AVS:FLOODFILL(tCent, wm.Scan[outSc])
+      --wm.Scan[outSc].Data:add(temp)
+      
+    end
+    --[[volTemp = labels:volume(i,i).value
     if volTemp < maxVol and volTemp>0.01 then
       --AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
-      --local clip = chDist(temp,clipDist)
+      --locail clip = chDist(temp,clipDist)
       --print(clip)
       --if clip then
         table.insert( vols, { id=i, vol=volTemp } )
       --end
       --end
+    end]]
+  end
+  
+  labels.Data:clear()
+  AVS:FIELD_TO_INT( wm.Scan[outSc].Data, labels.Data)
+  AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
+  nBubbles = labels.Data:max().value
+  wm.Scan[outSc].Data:clear()
+  
+  for i = 1,nBubbles do
+    volTemp = labels:volume(i,i).value
+    if volTemp < maxVol and volTemp>0.01 then
+      table.insert( vols, { id=i, vol=volTemp } )
     end
   end
   
@@ -135,11 +159,6 @@ function excludeVols(inSc, outSc, maxVol)
 
   for j=1, #vols do
     AVS:FIELD_THRESHOLD( labels.Data, temp, vols[j].id, vols[j].id, 255, 0)
-    if j==1 then
-      --local centre = temp:center()
-      --print("Largest bubble located at " .. centre)
-      print(temp:center())
-    end
     wm.Scan[outSc].Data:add(temp)
   end
   wm.Scan[6].Description = "Volumes over 0.01cm^3 and under maxVol cm^3"
