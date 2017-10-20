@@ -194,7 +194,7 @@ wm.Scan[4].Transform = wm.Scan[1].Transform
 wm.Scan[5].Adjust = wm.Scan[1].Adjust
 wm.Scan[5].Transform = wm.Scan[1].Transform
 --AVS:FIELD_OPS( toThresh.Data, toThresh.Data, 5, AVS.FIELD_OPS_Smooth)
-AVS:FIELD_THRESHOLD( wm.Scan[1].Data, wm.Scan[4].Data, 1135, 1650 )
+AVS:FIELD_THRESHOLD( wm.Scan[1].Data, wm.Scan[4].Data, 1250, 1650 )
 AVS:FIELD_OPS( wm.Scan[4].Data, wm.Scan[5].Data, 1, AVS.FIELD_OPS_Smooth )
 local tempScan = Field:new()
 --tempScan.Adjust = wm.Scan[4].Adjust
