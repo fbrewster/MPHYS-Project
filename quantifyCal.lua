@@ -77,15 +77,15 @@ end
 
 
 function mask(input, cHull, output, shrink)--masks scan[input] with scan[cHull], shrunk by "shrink" and outputs to scan[output]
-  shrink = -1*shrink
+  shrink = (shrink*100)+127
   --Exclude data outside of CH
   wm.Scan[output].Adjust = wm.Scan[input].Adjust
   wm.Scan[output].Transform = wm.Scan[input].Transform
   --need to shrink scan
   AVS:FIELD_OPS(wm.Scan[cHull].Data, wm.Scan[cHull].Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
-  AVS:FIELD_THRESHOLD(wm.Scan[cHull].Data, wm.Scan[cHull].Data, shrink)--delete everything 3cm in
+  AVS:FIELD_THRESHOLD(wm.Scan[cHull].Data, wm.Scan[cHull].Data, shrink)--delete everything shrink cm in
   AVS:FIELD_MASK(wm.Scan[input].Data, wm.Scan[cHull].Data, wm.Scan[output].Data)--delete outside of new shrunk mask
-  wm.Scan[cHull].Description = "Convex hull shrunk by 3cm"
+  wm.Scan[cHull].Description = [[Convex hull shrunk by <shrink>]]
   wm.Scan[output].Description = "Masked and thresholded data"
 end
 
@@ -110,10 +110,20 @@ function excludeVols(inSc, outSc, maxVol)
   print('# of bubbles: ' .. nBubbles)
   local volTemp
   
+  local file = io.open(basefolder..[[bubbles.csv]],"w")
+  if file then
+    file:write("id,vol,x,y,z \n")
+  else
+    error([[Error opening bubbles file, is it already open?]])
+  end
+  
   for i = 1,nBubbles do
     volTemp = labels:volume(i,i).value
+    AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
+    local x,y,z = Double:new()
+    x,y,z = temp:center()
+    file:write(i,',',volTemp,',',x,',',y,',',z,'\n' )
     if volTemp < maxVol and volTemp>0.01 then
-      AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
       local clip = chDist(temp,clipDist)
       --print(clip)
       if clip then
@@ -121,7 +131,7 @@ function excludeVols(inSc, outSc, maxVol)
       end
     end
   end
-  
+  io.close(file)
   
   
   local function compareVols(a,b)
@@ -133,13 +143,16 @@ function excludeVols(inSc, outSc, maxVol)
 
   for j=1, #vols do
     AVS:FIELD_THRESHOLD( labels.Data, temp, vols[j].id, vols[j].id, 255, 0)
-    if j==1 then
+    --if j==1 then
       --local centre = temp:center()
       --print("Largest bubble located at " .. centre)
-      print(temp:center())
-    end
+    --[[local x,y,z = Double:new()
+    x,y,z = temp:center()
+    wm.Scan[outSc].Data:add(temp)
+    file:write(vols[j].id,',',vols[j].vol,',',x,',',y,',',z,'\n' )]]
     wm.Scan[outSc].Data:add(temp)
   end
+  --io.close(file)
   wm.Scan[6].Description = "Volumes over 0.01cm^3 and under maxVol cm^3"
   print("# of final vols: " .. #vols)
   if #vols~=0 then
@@ -212,7 +225,7 @@ wm.Scan[3].Description = "Convex hull shrunk by 3cm"
 wm.Scan[5].Description = "Masked and thresholded data"]]--
 
 AVS:FIELD_OPS(wm.Scan[5].Data, wm.Scan[5].Data, 5, AVS.FIELD_OPS_Closing)
-mask(5,3,6,2.8)--mask scan 4 
+mask(5,3,6,1)--mask scan 
 
 excludeVols(6,7,3)
 
