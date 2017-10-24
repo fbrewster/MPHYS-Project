@@ -4,7 +4,7 @@ Frank Brewster
 Creates convex hull around both lungs delineation and then thresholds to find calcifications
 ]]--
 
-local testpatientpack = [[201103328.pack]]
+local testpatientpack = [[194102321.pack]]
 basefolder = [[C:\Users\Frank\MPHYS\Data\]]
 clipDist = 0.1
 
@@ -89,7 +89,6 @@ function mask(input, cHull, output, shrink)--masks scan[input] with scan[cHull],
   wm.Scan[output].Description = "Masked and thresholded data"
 end
 
-
 function excludeVols(inSc, outSc, maxVol)
   wm.Scan[outSc].Adjust = wm.Scan[inSc].Adjust
   wm.Scan[outSc].Transform = wm.Scan[inSc].Transform
@@ -98,7 +97,7 @@ function excludeVols(inSc, outSc, maxVol)
   labels.Adjust = wm.Scan[inSc].Adjust
   labels.Transform = wm.Scan[inSc].Transform
   local temp = Field:new()
-  local clipDist = 0.1
+  local clipDist = 0.3
   
   AVS:FIELD_TO_INT( wm.Scan[inSc].Data, labels.Data)
   AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
@@ -114,13 +113,12 @@ function excludeVols(inSc, outSc, maxVol)
   for i = 1,nBubbles do
     volTemp = labels:volume(i,i).value
     if volTemp < maxVol and volTemp>0.01 then
-      --AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
-      --local clip = chDist(temp,clipDist)
+      AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
+      local clip = chDist(temp,clipDist)
       --print(clip)
-      --if clip then
+      if clip then
         table.insert( vols, { id=i, vol=volTemp } )
-      --end
-      --end
+      end
     end
   end
   
@@ -158,26 +156,27 @@ function chDist(bubble, clipDist)--Checks if a bubble is too close to the convex
 
   
   AVS:FIELD_OPS(chIn.Data, chIn.Data, AVS.FIELD_OPS_SignedDist)--turn ch into a distance measure
-  chOut.Data:distxfm()
-  ch.Data:clear()
-  ch.Data = chIn.Data
-  chOut.Data:tobyte()
-  ch.Data:add(chOut.Data)
   local centre = Field:new()
   AVS:FIELD_CENTER_DOT(bubble, centre)-- put the centre of bubble into centre
-  local dist = Field:new()
-  AVS:FIELD_SAMPLE(centre, ch.Data, dist)-- sample the field ch at all the points in centre and output to dist
-    print(dist:getvalue(1,1,1))
+  local distF = Field:new()
+  AVS:FIELD_SAMPLE(centre, chIn.Data, distF)-- sample the field ch at all the points in centre and output to dist
+  --print(distF:getvalue(0))
+  local dist = distF:getvalue(0)
+  local distCent = (dist.value - 127)/100
+  local distAbs = math.abs(distCent)
+  --print(distAbs)
   
-  if distAbs<=clipDist then-- if the distance from the centre of the bubble to the ch is less than clipDist the return false
-    local clip = false
-  else
-    local clip = true
+  local clip = true
+  
+  if distAbs<clipDist then-- if the distance from the centre of the bubble to the ch is less than clipDist the return false
+     clip = false
+  --else
+    --local clip = 0
   end
   
   return clip
 end
-testpatientpack = getRandScan()
+--testpatientpack = getRandScan()
 print("Going to use " .. testpatientpack)
 loadpack(basefolder .. [[Pack\]] .. testpatientpack)
 wm.Scan[1].Description = testpatientpack
@@ -194,7 +193,7 @@ wm.Scan[4].Transform = wm.Scan[1].Transform
 wm.Scan[5].Adjust = wm.Scan[1].Adjust
 wm.Scan[5].Transform = wm.Scan[1].Transform
 --AVS:FIELD_OPS( toThresh.Data, toThresh.Data, 5, AVS.FIELD_OPS_Smooth)
-AVS:FIELD_THRESHOLD( wm.Scan[1].Data, wm.Scan[4].Data, 1250, 1650 )
+AVS:FIELD_THRESHOLD( wm.Scan[1].Data, wm.Scan[4].Data, 1250, 3000 )
 AVS:FIELD_OPS( wm.Scan[4].Data, wm.Scan[5].Data, 1, AVS.FIELD_OPS_Smooth )
 local tempScan = Field:new()
 --tempScan.Adjust = wm.Scan[4].Adjust
