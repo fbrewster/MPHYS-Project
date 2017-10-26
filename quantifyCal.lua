@@ -1,29 +1,36 @@
 --Quantify Calcifications
 --[[
 Frank Brewster
-Creates convex hull around both lungs delineation and then thresholds to find calcifications
+Creates convex hull around both lungs delineation and then thresholds and masks.
+Then does connected pixel analysis and discards large volumes.
+Floods volumes to minimum calcification CT number.
 ]]--
 
-local testpatientpack = [[194102321.pack]]
-basefolder = [[C:\Users\Frank\MPHYS\Data\]]
-clipDist = 0.1
+local testpatientpack = [[201110978.pack]]--scan to use if testing a specific scan
+basefolder = [[C:\Users\Frank\MPHYS\Data\]]--where the data is
+clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
+maxVol = 3--largest volumes considered a calcification
+bleedVol = 100--volume above which a fill is considred to have bled
+maxVolTot = 0--to keep track of how big the bleed volumes are
 
 function getRandScan()--Gets a random scan name from the list in ..\Data
-  local file = io.open(basefolder..[[list.txt]])
+  local file = io.open(basefolder..[[list.txt]])--open list
   local fNames = {}
   local i = 1
   local fNamesSplit = {}
 
-  if file then
-    for line in file:lines() do
-        fNames[i] = unpack(line:split(" "))
+  if file then--if the file exists
+    for line in file:lines() do--iterate through the lines
+        fNames[i] = unpack(line:split(" "))--split by line
         i=i+1
     end
   end
   
-  local nOfFiles = i-1  
-  local index = math.random(nOfFiles)  
-  local randScan = fNames[index]
+  local nOfFiles = i-1--number of files to choose from
+  math.randomseed(os.time())--initiate a random number generator
+  local dummy = math.random(nOfFiles)--first number can be non-random
+  local index = math.random(nOfFiles)--get a random index between 1 and the number of files  
+  local randScan = fNames[index]--get the file name at that index
   
   return randScan
 end
@@ -31,22 +38,7 @@ end
 function lungConvexHull()--Makes a convex hull from the delineation of both lungs
   
   local lungs = wm.Delineation.Both_Lungs or wm.Delineation.Lungs or wm.Delineation.Both_Lung --get lung delineation
-  --[[if (lungs==nil) then --find lung delineation if it has a weird name
-    local answer
-    io.write("Error: No lung delineation found. Is it named something else (y or n)? ")
-    --io.flush
-    answer = io.read(1)
-    if (answer=='y') then
-      local lungName
-      io.write("Please enter it: ")
-      --io.flush
-      lungName=io.read(15)
-      lungs=wm.Delineation(lungName)
-    else
-      error("Cannot proceed without a lung delineation")
-    end
-  end]]--
-    
+   
   local chIndex = Field:new()--create index for CH
   AVS:CONVEX_HULL( lungs.Dots, chIndex )--make CH index from lung delin
   chDots = lungs.Dots--dots are the same as lung
@@ -69,7 +61,7 @@ function lungConvexHull()--Makes a convex hull from the delineation of both lung
   newDel.Dots = delChPts
   newDel.Index = delChIndex
   
-  wm.Scan[3] = wm.Scan[1]:burn(newDel, 255, false)
+  wm.Scan[3] = wm.Scan[1]:burn(newDel, 255, false)--burn delineation onto scan 3
   wm.Scan[3].Description = "Lung Convex Hull Delineation"
   
   return newDel
@@ -77,7 +69,7 @@ end
 
 
 function mask(input, cHull, output, shrink)--masks scan[input] with scan[cHull], shrunk by "shrink" and outputs to scan[output]
-  shrink = (shrink*100)+127
+  shrink = (shrink*100)+127--convert to threshold value
   --Exclude data outside of CH
   wm.Scan[output].Adjust = wm.Scan[input].Adjust
   wm.Scan[output].Transform = wm.Scan[input].Transform
@@ -89,7 +81,8 @@ function mask(input, cHull, output, shrink)--masks scan[input] with scan[cHull],
   wm.Scan[output].Description = "Masked and thresholded data"
 end
 
-function excludeVols(inSc, outSc, maxVol)
+--Messy obsolete function for excluding large volumes
+--[[function excludeVols(inSc, outSc)
   wm.Scan[outSc].Adjust = wm.Scan[inSc].Adjust
   wm.Scan[outSc].Transform = wm.Scan[inSc].Transform
   local dummy = field:new()
@@ -97,7 +90,6 @@ function excludeVols(inSc, outSc, maxVol)
   labels.Adjust = wm.Scan[inSc].Adjust
   labels.Transform = wm.Scan[inSc].Transform
   local temp = Field:new()
-  local clipDist = 0.3
   
   AVS:FIELD_TO_INT( wm.Scan[inSc].Data, labels.Data)
   AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
@@ -161,6 +153,7 @@ function excludeVols(inSc, outSc, maxVol)
     error("No volumes detected")
   end
 end
+]]
 
 function chDist(bubble, clipDist)--Checks if a bubble is too close to the convex hull in scan 3
   local ch = wm.Scan[3]:copy()
@@ -174,60 +167,138 @@ function chDist(bubble, clipDist)--Checks if a bubble is too close to the convex
   local distF = Field:new()
   AVS:FIELD_SAMPLE(centre, chIn.Data, distF)-- sample the field ch at all the points in centre and output to dist
   --print(distF:getvalue(0))
-  local dist = distF:getvalue(0)
-  local distCent = (dist.value - 127)/100
-  local distAbs = math.abs(distCent)
+  local dist = distF:getvalue(0)--extract distance value
+  local distCent = (dist.value - 127)/100--convert to cm from CH boundary
+  local distAbs = math.abs(distCent)--take absolute value to include inside and out
   --print(distAbs)
   
   local clip = true
   
   if distAbs<clipDist then-- if the distance from the centre of the bubble to the ch is less than clipDist the return false
      clip = false
-  --else
-    --local clip = 0
   end
   
   return clip
 end
---testpatientpack = getRandScan()
+
+function bubbleCent (inSc) 
+  
+  local dummy = field:new()
+  local labels = Scan:new()
+  labels.Adjust = mAdjust
+  labels.Transform = mTrans
+  local temp = Field:new()
+  
+  AVS:FIELD_TO_INT( wm.Scan[inSc].Data, labels.Data)
+  AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
+  
+  local  cents = {}
+  local nBubbles = labels.Data:max().value
+  local volTemp = Double:new()
+  if nBubbles>2000 then
+    error("Too many bubbles! " .. nBubbles)
+  end
+  print('# of bubbles: ' .. nBubbles)
+
+  
+  for i = 1,nBubbles do
+    volTemp = labels:volume(i,i).value
+    if volTemp < maxVol and volTemp~=0 then
+      AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
+      local clip = chDist(temp,clipDist)
+      if clip then
+        local tempCent = field:new()
+        AVS:FIELD_CENTER_DOT(temp, tempCent)
+        table.insert( cents, {id=i, cent=tempCent})
+      end
+    end
+  end
+  
+  wm.Scan[7].Adjust = mAdjust
+  wm.Scan[7].Transform = mTrans
+  
+  for i = 1, #cents do
+    AVS:FIELD_THRESHOLD(labels.Data, temp, cents[i].id, cents[i].id, 255, 0)
+    wm.Scan[7].Data:add(temp)
+  end
+  
+  return cents
+end
+
+function hasBled(inScan)
+  local inThr = Scan:new()
+  local labels = Scan:new()
+  inThr.Adjust = mAdjust
+  inThr.Transform = mTrans
+  labels.Adjust = mAdjust
+  labels.Transform = mTrans
+  local dummy = field:new()
+  local volTemp,volTot = Double:new()
+  volTot = 0
+  
+  AVS:FIELD_THRESHOLD(inScan.Data, inThr.Data, 5000, 5000, 255, 0)
+  
+  AVS:FIELD_TO_INT(inThr.Data, labels.Data)
+  AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
+  
+  local nBubbles = labels.Data:max().value
+  
+  for i=1,nBubbles do
+    volTemp = labels:volume(i,i).value
+    volTot = volTot+volTemp
+  end
+
+  
+  local bleed = false
+  if volTot>=bleedVol then
+    bleed = true
+  end
+  
+  return bleed
+end
+
+
+testpatientpack = getRandScan()
 print("Going to use " .. testpatientpack)
 loadpack(basefolder .. [[Pack\]] .. testpatientpack)
 wm.Scan[1].Description = testpatientpack
+
+--set master adjust and transform.
+mAdjust = wm.Scan[1].Adjust
+mTrans = wm.Scan[1].Transform
 
 --Make convex hull
 local lungCH
 lungCH = lungConvexHull()
 
 --threshold into scan 4
---local toThresh = Scan:new()
---toThresh.Data = wm.Scan[1].Data
-wm.Scan[4].Adjust = wm.Scan[1].Adjust
-wm.Scan[4].Transform = wm.Scan[1].Transform
-wm.Scan[5].Adjust = wm.Scan[1].Adjust
-wm.Scan[5].Transform = wm.Scan[1].Transform
---AVS:FIELD_OPS( toThresh.Data, toThresh.Data, 5, AVS.FIELD_OPS_Smooth)
-AVS:FIELD_THRESHOLD( wm.Scan[1].Data, wm.Scan[4].Data, 1250, 3000 )
-AVS:FIELD_OPS( wm.Scan[4].Data, wm.Scan[5].Data, 1, AVS.FIELD_OPS_Smooth )
+wm.Scan[4].Adjust = mAdjust
+wm.Scan[4].Transform = mTrans
+wm.Scan[5].Adjust = mAdjust
+wm.Scan[5].Transform = mTrans
+AVS:FIELD_THRESHOLD( wm.Scan[1].Data, wm.Scan[4].Data, 1270, 3000 )
+
+--Smooth and put in scan 5
+AVS:FIELD_OPS( wm.Scan[4].Data, wm.Scan[5].Data, 1, AVS.FIELD_OPS_Smooth )--Smoothing filter
 local tempScan = Field:new()
---tempScan.Adjust = wm.Scan[4].Adjust
---tempScan.Transform = wm.Scan[4].Transform
 tempScan = wm.Scan[5].Data
-AVS:FIELD_THRESHOLD( tempScan, wm.Scan[5].Data, 1, 255)
-wm.Scan[4].Description = "Thresholded Scan"
+AVS:FIELD_THRESHOLD( tempScan, wm.Scan[5].Data, 1, 255)--Flatten
+AVS:FIELD_OPS(wm.Scan[5].Data, wm.Scan[5].Data, 5, AVS.FIELD_OPS_Closing)--Closing filter to minimise # of volumes
 
---[[--Exclude data outside of CH
-wm.Scan[5] = wm.Scan[1]
---need to shrink scan
-AVS:FIELD_OPS(wm.Scan[3].Data, wm.Scan[3].Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
-AVS:FIELD_THRESHOLD(wm.Scan[3].Data, wm.Scan[3].Data, -3)--delete everything 3cm in
-AVS:FIELD_MASK(wm.Scan[4].Data, wm.Scan[3].Data, wm.Scan[5].Data)--delete outside of new shrunk mask
-wm.Scan[3].Description = "Convex hull shrunk by 3cm"
-wm.Scan[5].Description = "Masked and thresholded data"]]--
+--Mask with CH and put in scan 6. Shrink by 1cm
+mask(5,3,6,1)
 
-AVS:FIELD_OPS(wm.Scan[5].Data, wm.Scan[5].Data, 5, AVS.FIELD_OPS_Closing)
-mask(5,3,6,1)--mask scan 
 
-excludeVols(6,7,3)
+local cents = bubbleCent(6)--find bubbles and centres
+wm.Scan[8] = wm.Scan[1]:copy()
+for i=1,#cents do--floodfill from centre of each bubble
+  local safe = wm.Scan[8]:copy()
+  AVS:FLOODFILL(cents[i].cent, wm.Scan[8].Data, 1200, 3, 5000)
+  local bleed = hasBled(wm.Scan[8])--check for bleed
+  collectgarbage()
+  if bleed then--if it has bled, don't include
+    wm.Scan[8] = safe:copy()
+  end
+end
 
---print("Pack: " .. testpatientpack)
 print("Finished")
