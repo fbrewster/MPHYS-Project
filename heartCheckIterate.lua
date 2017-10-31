@@ -40,3 +40,5 @@ end
 
 local heartProp = (inHeartTot/bubblesTot)*100
 print(heartProp .. "% of calcifications found are in the heart")
+
+hist:plot()

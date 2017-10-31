@@ -12,6 +12,26 @@ maxVol = 2.7--largest volumes considered a calcification
 bleedVol = 75--volume above which a fill is considred to have bled
 maxVolTot = 0--to keep track of how big the bleed volumes are
 
+function getRandScan()--Gets a random scan name from the list in ..\Data
+  local file = io.open(basefolder..[[list.txt]])--open list
+  local fNames = {}
+  local i = 1
+
+  if file then--if the file exists
+    for line in file:lines() do--iterate through the lines
+        fNames[i] = unpack(line:split(" "))--split by line
+        i=i+1
+    end
+  end
+  
+  local nOfFiles = i-1--number of files to choose from
+  math.randomseed(os.time())--initiate a random number generator
+  local dummy = math.random(nOfFiles)--first number can be non-random
+  local index = math.random(nOfFiles)--get a random index between 1 and the number of files
+  local randScan = fNames[index]--get the file name at that index
+  
+  return randScan
+end
 
 function lungConvexHull()--Makes a convex hull from the delineation of both lungs
   
@@ -47,11 +67,8 @@ end
 
 
 function mask(input, cHull, output, shrink)--masks scan[input] with scan[cHull], shrunk by "shrink" and outputs to scan[output]
-  if shrink then
-    shrink = (shrink*100)+127--convert to threshold value
-  else
-    local shrink = 0
-  end
+ 
+  shrink = (shrink*100)+127--convert to threshold value
   --Exclude data outside of CH
   wm.Scan[output].Adjust = wm.Scan[input].Adjust
   wm.Scan[output].Transform = wm.Scan[input].Transform
@@ -172,6 +189,7 @@ function hasBled(inScan)
   return bleed
 end
 
+currentpatientpack = getRandScan()
 loadpack(basefolder ..[[PackWithHearts\]] .. currentpatientpack)
 wm.Scan[1].Description = currentpatientpack
 
@@ -182,6 +200,10 @@ mTrans = wm.Scan[1].Transform
 --Make convex hull
 local lungCH
 lungCH = lungConvexHull()
+
+mask(1,3,4,1)
+local hist = lungCH:histogram(wm.Scan[1],2000,500)
+hist = wm.Scan[4]:histogram(wm.Scan[4],650,3000,3000,256)
 
 --threshold into scan 4
 wm.Scan[4].Adjust = mAdjust
@@ -197,8 +219,18 @@ tempScan = wm.Scan[5].Data
 AVS:FIELD_THRESHOLD( tempScan, wm.Scan[5].Data, 1, 255)--Flatten
 AVS:FIELD_OPS(wm.Scan[5].Data, wm.Scan[5].Data, 5, AVS.FIELD_OPS_Closing)--Closing filter to minimise # of volumes
 
+--spine burn
+spine = Scan:new()
+local delin = wm.Delineation.SC
+spine = wm.Scan[1]:burn(delin, 255, true)
+AVS:FIELD_OPS(spine.Data, spine.Data, AVS.FIELD_OPS_SignedDist)
+local spineBig = Scan:new()
+AVS:FIELD_THRESHOLD(spine.Data, spineBig.Data,1)
+wm.Scan[5].Data:add(spineBig.Data)
+
+
 --Mask with CH and put in scan 6. Shrink by 1cm
-mask(5,3,6,1)
+mask(5,3,6,0)
 
 
 local cents = bubbleCent(6)--find bubbles and centres
