@@ -1,39 +1,17 @@
---Quantify Calcifications
+--Check Heart Calcifications
 --[[
 Frank Brewster
-Creates convex hull around both lungs delineation and then thresholds and masks.
-Then does connected pixel analysis and discards large volumes.
-Floods volumes to minimum calcification CT number.
+Finds calcifications and then checks what percentage of these are within the heart delineation
 ]]--
 
-local testpatientpack = [[201110978.pack]]--scan to use if testing a specific scan
-basefolder = [[C:\Users\Frank\MPHYS\Data\]]--where the data is
+
+basefolder = [[D:\MPHYS_Data\]]
+currentpatientpack = [[201304314.pack]]
 clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
 maxVol = 2.7--largest volumes considered a calcification
 bleedVol = 75--volume above which a fill is considred to have bled
 maxVolTot = 0--to keep track of how big the bleed volumes are
 
-function getRandScan()--Gets a random scan name from the list in ..\Data
-  local file = io.open(basefolder..[[list.txt]])--open list
-  local fNames = {}
-  local i = 1
-  local fNamesSplit = {}
-
-  if file then--if the file exists
-    for line in file:lines() do--iterate through the lines
-        fNames[i] = unpack(line:split(" "))--split by line
-        i=i+1
-    end
-  end
-  
-  local nOfFiles = i-1--number of files to choose from
-  math.randomseed(os.time())--initiate a random number generator
-  local dummy = math.random(nOfFiles)--first number can be non-random
-  local index = math.random(nOfFiles)--get a random index between 1 and the number of files
-  local randScan = fNames[index]--get the file name at that index
-  
-  return randScan
-end
 
 function lungConvexHull()--Makes a convex hull from the delineation of both lungs
   
@@ -85,78 +63,7 @@ function mask(input, cHull, output, shrink)--masks scan[input] with scan[cHull],
   wm.Scan[output].Description = "Masked and thresholded data"
 end
 
---Messy obsolete function for excluding large volumes
-function excludeVols(inSc, outSc)
-  wm.Scan[outSc].Adjust = wm.Scan[inSc].Adjust
-  wm.Scan[outSc].Transform = wm.Scan[inSc].Transform
-  local dummy = field:new()
-  local labels = Scan:new()
-  labels.Adjust = wm.Scan[inSc].Adjust
-  labels.Transform = wm.Scan[inSc].Transform
-  local temp = Field:new()
-  
-  AVS:FIELD_TO_INT( wm.Scan[inSc].Data, labels.Data)
-  AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
-  
-  local vols = {}
-  local nBubbles = labels.Data:max().value
-  if nBubbles>2000 then
-    error("Too many bubbles! " .. nBubbles)
-  end
-  print('# of bubbles: ' .. nBubbles)
-  local volTemp
-  
-  local file = io.open(basefolder..[[bubbles.csv]],"w")
-  if file then
-    file:write("id,vol,x,y,z \n")
-  else
-    error([[Error opening bubbles file, is it already open?]])
-  end
-  
-  for i = 1,nBubbles do
-    volTemp = labels:volume(i,i).value
-    AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
-    local x,y,z = Double:new()
-    x,y,z = temp:center()
-    file:write(i,',',volTemp,',',x,',',y,',',z,'\n' )
-    if volTemp < maxVol and volTemp>0.01 then
-      local clip = chDist(temp,clipDist)
-      --print(clip)
-      if clip then
-        table.insert( vols, { id=i, vol=volTemp } )
-      end
-    end
-  end
-  io.close(file)
-  
-  
-  local function compareVols(a,b)
-    return a.vol > b.vol
-  end
-  table.sort(vols, compareVols)
-  
-  
 
-  for j=1, #vols do
-    AVS:FIELD_THRESHOLD( labels.Data, temp, vols[j].id, vols[j].id, 255, 0)
-    --if j==1 then
-      --local centre = temp:center()
-      --print("Largest bubble located at " .. centre)
-    --[[local x,y,z = Double:new()
-    x,y,z = temp:center()
-    wm.Scan[outSc].Data:add(temp)
-    file:write(vols[j].id,',',vols[j].vol,',',x,',',y,',',z,'\n' )]]
-    wm.Scan[outSc].Data:add(temp)
-  end
-  --io.close(file)
-  wm.Scan[6].Description = "Volumes over 0.01cm^3 and under maxVol cm^3"
-  print("# of final vols: " .. #vols)
-  if #vols~=0 then
-    print("Largest vol: " .. vols[1].vol)
-  else
-    error("No volumes detected")
-  end
-end
 
 function chDist(bubble, clipDist)--Checks if a bubble is too close to the convex hull in scan 3
   local ch = wm.Scan[3]:copy()
@@ -265,11 +172,8 @@ function hasBled(inScan)
   return bleed
 end
 
-
-testpatientpack = getRandScan()
-print("Going to use " .. testpatientpack)
-loadpack(basefolder .. [[Pack\]] .. testpatientpack)
-wm.Scan[1].Description = testpatientpack
+loadpack(basefolder ..[[PackWithHearts\]] .. currentpatientpack)
+wm.Scan[1].Description = currentpatientpack
 
 --set master adjust and transform.
 mAdjust = wm.Scan[1].Adjust
@@ -298,7 +202,8 @@ mask(5,3,6,1)
 
 
 local cents = bubbleCent(6)--find bubbles and centres
-print("Found centres, starting flooding")
+print("found centres")
+--[[print("Found centres, starting flooding")
 local halfway = (#cents-#cents%2)/2
 wm.Scan[8] = wm.Scan[1]:copy()
 --mask(8,3,8)
@@ -314,6 +219,40 @@ for i=1,#cents do--floodfill from centre of each bubble
     print("Halway through flooding")
   end
 end
-print("Finished flooding")
+print("Finished flooding")]]
 
-print("Finished")
+local heart = wm.Delineation.Heart or wm.Delineation.heart
+if heart then
+  print("heart delin found")
+else
+  error("No heart delineation found on scan " .. currentpatientpack)
+end
+
+heartBurn = Scan:new()
+heartDist = Scan:new()
+heartBurn.Adjust = mAdjust
+heartBurn.Transform = mTrans
+heartDist.Adjust = mAdjust
+heartDist.Transform = mTrans
+heartBurn = wm.Scan[1]:burn(heart,255,false)
+AVS:FIELD_OPS(heartBurn.Data, heartDist.Data, AVS.FIELD_OPS_SignedDist)
+
+local currentInHeart = 0
+for i=1,#cents do
+  local distF = field:new()
+  AVS:FIELD_SAMPLE(cents[i].cent, heartDist.Data, distF)
+  local dist = distF:getvalue(0)--extract distance value
+  local distCent = (dist.value - 127)/100
+  if distCent>=0 then
+    currentInHeart=currentInHeart+1
+  end
+end
+
+local file = io.open(basefolder .. [[inHeart.csv]],"a")
+
+local heartProp=currentInHeart/#cents
+file:write(currentpatientpack .. "," .. #cents .. "," .. heartProp .. "\n")
+io.close(file)
+
+inHeartTot = inHeartTot + currentInHeart
+bubblesTot = bubblesTot + #cents

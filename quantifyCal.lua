@@ -17,7 +17,6 @@ function getRandScan()--Gets a random scan name from the list in ..\Data
   local file = io.open(basefolder..[[list.txt]])--open list
   local fNames = {}
   local i = 1
-  local fNamesSplit = {}
 
   if file then--if the file exists
     for line in file:lines() do--iterate through the lines
@@ -184,7 +183,7 @@ function chDist(bubble, clipDist)--Checks if a bubble is too close to the convex
   return clip
 end
 
-function bubbleCent (inSc) 
+function bubbleCent (inSc)--Finds centres of bubbles
   
   local dummy = field:new()
   local labels = Scan:new()
@@ -192,13 +191,13 @@ function bubbleCent (inSc)
   labels.Transform = mTrans
   local temp = Field:new()
   
-  AVS:FIELD_TO_INT( wm.Scan[inSc].Data, labels.Data)
-  AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
+  AVS:FIELD_TO_INT( wm.Scan[inSc].Data, labels.Data)--Changes pixel values to integers
+  AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )--Finds all volumes and adds to labels
   
   local  cents = {}
   local nBubbles = labels.Data:max().value
   local volTemp = Double:new()
-  if nBubbles>2000 then
+  if nBubbles>2000 then--Too many bubbles takes too long
     error("Too many bubbles! " .. nBubbles)
   end
   print('# of bubbles: ' .. nBubbles)
@@ -206,32 +205,32 @@ function bubbleCent (inSc)
   
   for i = 1,nBubbles do
     volTemp = labels:volume(i,i).value
-    if volTemp < maxVol and volTemp~=0 then
-      AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
-      local clip = chDist(temp,clipDist)
-      if clip then
+    if volTemp < maxVol and volTemp>0.001 then--Only include bubble if it's volume is between 0.001 and maxVol
+      AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)--Put just current bubble into temp
+      local clip = chDist(temp,clipDist)--Check if bubbles is too close to convex hull boundary
+      if clip then--onyl include if it isn't too close
         local tempCent = field:new()
         AVS:FIELD_CENTER_DOT(temp, tempCent)
-        table.insert( cents, {id=i, cent=tempCent})
+        table.insert( cents, {id=i, cent=tempCent})--Put cnetre of bubble into table
       end
     end
-    if i == (nBubbles-nBubbles%2)/2 then
+    if i == (nBubbles-nBubbles%2)/2 then--For debugging
       print("Halfway through bubble checking")
     end
   end
   
-  wm.Scan[7].Adjust = mAdjust
+  wm.Scan[7].Adjust = mAdjust--Set up scan to show unflooded bubbles
   wm.Scan[7].Transform = mTrans
   
   for i = 1, #cents do
     AVS:FIELD_THRESHOLD(labels.Data, temp, cents[i].id, cents[i].id, 255, 0)
-    wm.Scan[7].Data:add(temp)
+    wm.Scan[7].Data:add(temp)--Put unflooded bubbles into scan 7
   end
   
   return cents
 end
 
-function hasBled(inScan)
+function hasBled(inScan)--Checks to see if the flood fill has bled out by checking total flooded volume
   local inThr = Scan:new()
   local labels = Scan:new()
   inThr.Adjust = mAdjust
@@ -242,33 +241,33 @@ function hasBled(inScan)
   local volTemp,volTot = Double:new()
   volTot = 0
   
-  AVS:FIELD_THRESHOLD(inScan.Data, inThr.Data, 5000, 5000, 255, 0)
+  AVS:FIELD_THRESHOLD(inScan.Data, inThr.Data, 5000, 5000, 255, 0)--Thresholf off only flooded values
   
   AVS:FIELD_TO_INT(inThr.Data, labels.Data)
-  AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
+  AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )--Find volumes of flooded values
   
   local nBubbles = labels.Data:max().value
   
-  for i=1,nBubbles do
+  for i=1,nBubbles do--add up all the volumes
     volTemp = labels:volume(i,i).value
     volTot = volTot+volTemp
   end
 
   
   local bleed = false
-  if volTot>=bleedVol then
+  if volTot>=bleedVol then--if the volume is greater than bleedVol then return true
     bleed = true
   elseif volTot>maxVolTot then
-    maxVolTot=volTot
+    maxVolTot=volTot--if it hasn't bled, store the volume (for debugging)
   end
   
   return bleed
 end
 
 
-testpatientpack = getRandScan()
+testpatientpack = getRandScan()--get a random scan
 print("Going to use " .. testpatientpack)
-loadpack(basefolder .. [[Pack\]] .. testpatientpack)
+loadpack(basefolder .. [[Pack\]] .. testpatientpack)--Load the pack
 wm.Scan[1].Description = testpatientpack
 
 --set master adjust and transform.
