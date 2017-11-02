@@ -202,15 +202,16 @@ local lungCH
 lungCH = lungConvexHull()
 
 mask(1,3,4,1)
-local hist = lungCH:histogram(wm.Scan[1],2000,500)
-hist = wm.Scan[4]:histogram(wm.Scan[4],650,3000,3000,256)
+local hist = wm.Scan[4]:histogram(wm.Scan[4],650,3000,3000,256)
+hist.cumulative = true
+local lowThresh = hist:percentile(95)
 
 --threshold into scan 4
 wm.Scan[4].Adjust = mAdjust
 wm.Scan[4].Transform = mTrans
 wm.Scan[5].Adjust = mAdjust
 wm.Scan[5].Transform = mTrans
-AVS:FIELD_THRESHOLD( wm.Scan[1].Data, wm.Scan[4].Data, 1270, 3000 )
+AVS:FIELD_THRESHOLD( wm.Scan[1].Data, wm.Scan[4].Data, lowThresh, 3000 )
 
 --Smooth and put in scan 5
 AVS:FIELD_OPS( wm.Scan[4].Data, wm.Scan[5].Data, 2, AVS.FIELD_OPS_Smooth )--Smoothing filter

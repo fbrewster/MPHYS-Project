@@ -292,6 +292,14 @@ tempScan = wm.Scan[5].Data
 AVS:FIELD_THRESHOLD( tempScan, wm.Scan[5].Data, 1, 255)--Flatten
 AVS:FIELD_OPS(wm.Scan[5].Data, wm.Scan[5].Data, 5, AVS.FIELD_OPS_Closing)--Closing filter to minimise # of volumes
 
+spine = Scan:new()
+local delin = wm.Delineation.SC
+spine = wm.Scan[1]:burn(delin, 255, true)
+AVS:FIELD_OPS(spine.Data, spine.Data, AVS.FIELD_OPS_SignedDist)
+local spineBig = Scan:new()
+AVS:FIELD_THRESHOLD(spine.Data, spineBig.Data,1)
+wm.Scan[5].Data:add(spineBig.Data)
+
 --Mask with CH and put in scan 6. Shrink by 1cm
 mask(5,3,6,1)
 
@@ -314,5 +322,14 @@ for i=1,#cents do--floodfill from centre of each bubble
   end
 end
 print("Finished flooding")
+
+wm.Scan[1].Description = [[Original CT Scan]]
+wm.Scan[2].Description = [[Dose]]
+wm.Scan[3].Description = [[Mask]]
+wm.Scan[4].Description = [[Thresholded]]
+wm.Scan[5].Description = [[Smoothed]]
+wm.Scan[6].Description = [[Masked]]
+wm.Scan[7].Description = [[Calcifications]]
+wm.Scan[8].Description = [[Original with calcifications flooded to 5000]]
 
 print("Finished")

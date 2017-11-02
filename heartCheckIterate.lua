@@ -17,7 +17,7 @@ if file then--if the file exists
 end
 io.close(file)
 
-local file =io.open(basefolder..[[inHeart.csv]],"w")
+file =io.open(basefolder..[[inHeart.csv]],"w")
 file:write("id,# of cal,Frac of cal in heart \n")
 io.close(file)
 
