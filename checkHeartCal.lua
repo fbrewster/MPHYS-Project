@@ -33,6 +33,18 @@ function getRandScan()--Gets a random scan name from the list in ..\Data
   return randScan
 end
 
+function TScan:setup()
+  self.adjust = mAdjust
+  self.Transform = mTrans
+end
+
+function display(scans)
+  for i=1,#scans do
+    local j= i+2
+    wm.Scan[j] = scans[i]
+  end
+end
+
 function lungConvexHull()--Makes a convex hull from the delineation of both lungs
   
   local lungs = wm.Delineation.Both_Lungs or wm.Delineation.Lungs or wm.Delineation.Both_Lung --get lung delineation
@@ -41,7 +53,7 @@ function lungConvexHull()--Makes a convex hull from the delineation of both lung
   AVS:CONVEX_HULL( lungs.Dots, chIndex )--make CH index from lung delin
   chDots = lungs.Dots--dots are the same as lung
   
-  trans = wm.Scan[1].Transform--take scan transform
+  local trans = mTrans--take scan transform
   AVS:DOTXFM( chDots, trans, chDots )--change chDots to scan transform
   local delChPts = Field:new()
   local delChIndex = Field:new()
@@ -59,33 +71,35 @@ function lungConvexHull()--Makes a convex hull from the delineation of both lung
   newDel.Dots = delChPts
   newDel.Index = delChIndex
   
-  wm.Scan[3] = wm.Scan[1]:burn(newDel, 255, false)--burn delineation onto scan 3
-  wm.Scan[3].Description = "Lung Convex Hull Delineation"
+  local cHull = Scan:new()
+  cHull.Adjust = mAdjust
+  cHull.Transform = mTrans
   
-  return newDel
+  cHull = wm.Scan[1]:burn(newDel, 255, false)--burn delineation onto scan 3
+  cHull.Description = "Lung Convex Hull Delineation"
+  
+  return newDel, cHull
 end
 
 
-function mask(input, cHull, output, shrink)--masks scan[input] with scan[cHull], shrunk by "shrink" and outputs to scan[output]
- 
-  shrink = (shrink*100)+127--convert to threshold value
+function mask(input, cHull, lShrink)--masks scan[input] with scan[cHull], shrunk by "shrink" and outputs to scan[output]
+  local ch = cHull:copy()
+  lShrink = (lShrink*100)+127--convert to threshold value
   --Exclude data outside of CH
-  wm.Scan[output].Adjust = wm.Scan[input].Adjust
-  wm.Scan[output].Transform = wm.Scan[input].Transform
+  local output = Scan:new() 
+  output:setup()
   --need to shrink scan
-  AVS:FIELD_OPS(wm.Scan[cHull].Data, wm.Scan[cHull].Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
-  AVS:FIELD_THRESHOLD(wm.Scan[cHull].Data, wm.Scan[cHull].Data, shrink)--delete everything shrink cm in
-  AVS:FIELD_MASK(wm.Scan[input].Data, wm.Scan[cHull].Data, wm.Scan[output].Data)--delete outside of new shrunk mask
-  wm.Scan[cHull].Description = [[Convex hull shrunk by <shrink>]]
-  wm.Scan[output].Description = "Masked and thresholded data"
+  AVS:FIELD_OPS(ch.Data, ch.Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
+  AVS:FIELD_THRESHOLD(ch.Data, ch.Data, lShrink)--delete everything shrink cm in
+  AVS:FIELD_MASK(input.Data, ch.Data, output.Data)--delete outside of new shrunk mask
+  ch.Description = [[Convex hull shrunk by <shrink>]]
+  output.Description = "Masked and thresholded data"
+  return output
 end
 
 
 
-function chDist(bubble, clipDist)--Checks if a bubble is too close to the convex hull in scan 3
-  local ch = wm.Scan[3]:copy()
-  local chIn = wm.Scan[3]:copy()
-  local chOut = wm.Scan[3]:copy()
+function chDist(bubble, clipDist, chIn)--Checks if a bubble is too close to the convex hull in scan 3
 
   
   AVS:FIELD_OPS(chIn.Data, chIn.Data, AVS.FIELD_OPS_SignedDist)--turn ch into a distance measure
@@ -108,15 +122,14 @@ function chDist(bubble, clipDist)--Checks if a bubble is too close to the convex
   return clip
 end
 
-function bubbleCent (inSc) 
+function bubbleCent (inSc,cHull) 
   
   local dummy = field:new()
   local labels = Scan:new()
-  labels.Adjust = mAdjust
-  labels.Transform = mTrans
+  labels:setup()
   local temp = Field:new()
   
-  AVS:FIELD_TO_INT( wm.Scan[inSc].Data, labels.Data)
+  AVS:FIELD_TO_INT( inSc.Data, labels.Data)
   AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
   
   local  cents = {}
@@ -130,9 +143,9 @@ function bubbleCent (inSc)
   
   for i = 1,nBubbles do
     volTemp = labels:volume(i,i).value
-    if volTemp < maxVol and volTemp~=0 then
+    if volTemp < maxVol and volTemp>0.001 then
       AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
-      local clip = chDist(temp,clipDist)
+      local clip = chDist(temp,clipDist,cHull)
       if clip then
         local tempCent = field:new()
         AVS:FIELD_CENTER_DOT(temp, tempCent)
@@ -144,15 +157,15 @@ function bubbleCent (inSc)
     end
   end
   
-  wm.Scan[7].Adjust = mAdjust
-  wm.Scan[7].Transform = mTrans
+  local output = Scan:new()
+  output:setup()
   
   for i = 1, #cents do
     AVS:FIELD_THRESHOLD(labels.Data, temp, cents[i].id, cents[i].id, 255, 0)
-    wm.Scan[7].Data:add(temp)
+    output.Data:add(temp)
   end
   
-  return cents
+  return cents, output
 end
 
 function hasBled(inScan)
@@ -192,49 +205,71 @@ end
 currentpatientpack = getRandScan()
 loadpack(basefolder ..[[PackWithHearts\]] .. currentpatientpack)
 wm.Scan[1].Description = currentpatientpack
+local scans = {}
 
 --set master adjust and transform.
 mAdjust = wm.Scan[1].Adjust
 mTrans = wm.Scan[1].Transform
 
---Make convex hull
-local lungCH
-lungCH = lungConvexHull()
+local orign = Scan:new()
+orign = wm.Scan[1]:copy()
 
-mask(1,3,4,1)
-local hist = wm.Scan[4]:histogram(wm.Scan[4],650,3000,3000,256)
+--Make convex hull
+local lungCH = Delineation:new()
+local cHull = Scan:new()
+cHull:setup()
+lungCH,cHull = lungConvexHull()
+
+local masked = Scan:new()
+masked:setup()
+masked = mask(orign,cHull,1)
+local hist = masked:histogram(masked,650,3000,3000,256)
 hist.cumulative = true
-local lowThresh = hist:percentile(95)
+local lowThresh = hist:percentile(99)
+local highThresh = hist:max()
 
 --threshold into scan 4
-wm.Scan[4].Adjust = mAdjust
-wm.Scan[4].Transform = mTrans
-wm.Scan[5].Adjust = mAdjust
-wm.Scan[5].Transform = mTrans
-AVS:FIELD_THRESHOLD( wm.Scan[1].Data, wm.Scan[4].Data, lowThresh, 3000 )
+local threshed = Scan:new()
+threshed:setup()
+AVS:FIELD_THRESHOLD( orign.Data, threshed.Data, lowThresh, highThresh )
+scans[2] = threshed
 
 --Smooth and put in scan 5
-AVS:FIELD_OPS( wm.Scan[4].Data, wm.Scan[5].Data, 2, AVS.FIELD_OPS_Smooth )--Smoothing filter
+local smoothed = Scan:new()
+smoothed:setup()
+AVS:FIELD_OPS( threshed.Data, smoothed.Data, 2, AVS.FIELD_OPS_Smooth )--Smoothing filter
 local tempScan = Field:new()
-tempScan = wm.Scan[5].Data
-AVS:FIELD_THRESHOLD( tempScan, wm.Scan[5].Data, 1, 255)--Flatten
-AVS:FIELD_OPS(wm.Scan[5].Data, wm.Scan[5].Data, 5, AVS.FIELD_OPS_Closing)--Closing filter to minimise # of volumes
+tempScan = smoothed.Data
+AVS:FIELD_THRESHOLD( tempScan, smoothed.Data, 1, 255)--Flatten
+AVS:FIELD_OPS(smoothed.Data, smoothed.Data, 5, AVS.FIELD_OPS_Closing)--Closing filter to minimise # of volumes
 
 --spine burn
 spine = Scan:new()
-local delin = wm.Delineation.SC
-spine = wm.Scan[1]:burn(delin, 255, true)
+spine:setup()
+local delin = wm.Delineation.SC or wm.Delineation.cord
+spine = orign:burn(delin, 255, true)
 AVS:FIELD_OPS(spine.Data, spine.Data, AVS.FIELD_OPS_SignedDist)
 local spineBig = Scan:new()
 AVS:FIELD_THRESHOLD(spine.Data, spineBig.Data,1)
-wm.Scan[5].Data:add(spineBig.Data)
-
+smoothed.Data:add(spineBig.Data)
+scans[3] = smoothed
 
 --Mask with CH and put in scan 6. Shrink by 1cm
-mask(5,3,6,0)
+local maskSmooth = Scan:new()
+maskSmooth:setup()
+maskSmooth = mask(smoothed,cHull,1)
+scans[4] = maskSmooth
 
 
-local cents = bubbleCent(6)--find bubbles and centres
+local cents = field:new()
+local bubs = Scan:new()
+bubs:setup()
+local shcHull = cHull:copy()
+AVS:FIELD_OPS(shcHull.Data, shcHull.Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
+AVS:FIELD_THRESHOLD(shcHull.Data, shcHull.Data, 227)--delete everything shrink cm in
+scans[1] = shcHull
+cents,bubs = bubbleCent(maskSmooth,shcHull)--find bubbles and centres
+scans[5] = bubs
 print("found centres")
 --[[print("Found centres, starting flooding")
 local halfway = (#cents-#cents%2)/2
@@ -254,6 +289,9 @@ for i=1,#cents do--floodfill from centre of each bubble
 end
 print("Finished flooding")]]
 
+display(scans)
+print("Finished flooding")
+
 local heart = wm.Delineation.Heart or wm.Delineation.heart
 if heart then
   print("heart delin found")
@@ -263,11 +301,9 @@ end
 
 heartBurn = Scan:new()
 heartDist = Scan:new()
-heartBurn.Adjust = mAdjust
-heartBurn.Transform = mTrans
-heartDist.Adjust = mAdjust
-heartDist.Transform = mTrans
-heartBurn = wm.Scan[1]:burn(heart,255,false)
+heartBurn:setup()
+heartDist:setup()
+heartBurn = orign:burn(heart,255,false)
 AVS:FIELD_OPS(heartBurn.Data, heartDist.Data, AVS.FIELD_OPS_SignedDist)
 
 local currentInHeart = 0
@@ -287,5 +323,5 @@ local heartProp=currentInHeart/#cents
 file:write(currentpatientpack .. "," .. #cents .. "," .. heartProp .. "\n")
 io.close(file)
 
-inHeartTot = inHeartTot + currentInHeart
-bubblesTot = bubblesTot + #cents
+--[[inHeartTot = inHeartTot + currentInHeart
+bubblesTot = bubblesTot + #cents]]
