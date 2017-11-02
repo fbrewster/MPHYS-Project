@@ -1,7 +1,8 @@
 --Iterate through data
 
+wm:clear()
 basefolder = [[D:\MPHYS_Data\]]
-nOfScans=10
+nOfScans=30
 inHeartTot=0
 bubblesTot=0
 
@@ -36,9 +37,8 @@ for j=1,nOfScans do
   currentpatientpack = fNames[index]
   print(j)
   checkHeartCal()
+  wm:clear()
 end
 
 local heartProp = (inHeartTot/bubblesTot)*100
 print(heartProp .. "% of calcifications found are in the heart")
-
-hist:plot()
