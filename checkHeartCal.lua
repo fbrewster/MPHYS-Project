@@ -5,11 +5,11 @@ Finds calcifications and then checks what percentage of these are within the hea
 ]]--
 
 
-basefolder = [[D:\MPHYS_Data\]]
-currentpatientpack = [[201304314.pack]]
+--basefolder = [[D:\MPHYS_Data\]]
+--currentpatientpack = [[201205316.pack]]
 clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
 maxVol = 2.7--largest volumes considered a calcification
-bleedVol = 75--volume above which a fill is considred to have bled
+bleedVol = 30--volume above which a fill is considred to have bled
 maxVolTot = 0--to keep track of how big the bleed volumes are
 
 function getRandScan()--Gets a random scan name from the list in ..\Data
@@ -90,7 +90,8 @@ function mask(input, cHull, lShrink)--masks scan[input] with scan[cHull], shrunk
   output:setup()
   --need to shrink scan
   AVS:FIELD_OPS(ch.Data, ch.Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
-  AVS:FIELD_THRESHOLD(ch.Data, ch.Data, lShrink)--delete everything shrink cm in
+  local temp = ch:copy()
+  AVS:FIELD_THRESHOLD(temp.Data, ch.Data, lShrink)--delete everything shrink cm in
   AVS:FIELD_MASK(input.Data, ch.Data, output.Data)--delete outside of new shrunk mask
   ch.Description = [[Convex hull shrunk by <shrink>]]
   output.Description = "Masked and thresholded data"
@@ -128,7 +129,7 @@ function bubbleCent (inSc,cHull)
   local labels = Scan:new()
   labels:setup()
   local temp = Field:new()
-  
+  print("start bubble")
   AVS:FIELD_TO_INT( inSc.Data, labels.Data)
   AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
   
@@ -136,7 +137,18 @@ function bubbleCent (inSc,cHull)
   local nBubbles = labels.Data:max().value
   local volTemp = Double:new()
   if nBubbles>2000 then
-    error("Too many bubbles! " .. nBubbles)
+    wm.Scan[4] = inSc:copy()
+    print("Too many bubbles! " .. nBubbles .. " Pack: " .. currentpatientpack)
+    AVS:FIELD_OPS( inSc.Data, inSc.Data, 1, AVS.FIELD_OPS_Smooth )
+    AVS:FIELD_TO_INT( inSc.Data, labels.Data)
+    AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
+    nBubbles = labels.Data:max().value
+    if nBubbles>2000 then
+      wm.Scan[4] = inSc:copy()
+      error("Tried smoothing again but still too many bubbles. " .. nBubbles)
+    else
+      print("Smoothing again worked")
+    end
   end
   print('# of bubbles: ' .. nBubbles)
 
@@ -155,6 +167,7 @@ function bubbleCent (inSc,cHull)
     if i == (nBubbles-nBubbles%2)/2 then
       print("Halfway through bubble checking")
     end
+    collectgarbage()
   end
   
   local output = Scan:new()
@@ -202,9 +215,9 @@ function hasBled(inScan)
   return bleed
 end
 
-currentpatientpack = getRandScan()
+--currentpatientpack = getRandScan()
 loadpack(basefolder ..[[PackWithHearts\]] .. currentpatientpack)
-wm.Scan[1].Description = currentpatientpack
+--wm.Scan[1].Description = currentpatientpack
 local scans = {}
 
 --set master adjust and transform.
@@ -226,27 +239,32 @@ masked = mask(orign,cHull,1)
 local hist = masked:histogram(masked,650,3000,3000,256)
 hist.cumulative = true
 local lowThresh = hist:percentile(99)
+local floodThresh = hist:percentile(97)
+if floodThresh.value<1135 then 
+  print([[Flood threshold's fucked mate]])
+  floodThresh = 1135
+end
 local highThresh = hist:max()
-
+print("got hist")
 --threshold into scan 4
 local threshed = Scan:new()
 threshed:setup()
-AVS:FIELD_THRESHOLD( orign.Data, threshed.Data, lowThresh, highThresh )
+AVS:FIELD_THRESHOLD( orign.Data, threshed.Data, lowThresh.value, highThresh.value )
 scans[2] = threshed
 
 --Smooth and put in scan 5
 local smoothed = Scan:new()
 smoothed:setup()
 AVS:FIELD_OPS( threshed.Data, smoothed.Data, 2, AVS.FIELD_OPS_Smooth )--Smoothing filter
-local tempScan = Field:new()
-tempScan = smoothed.Data
+--local tempScan = Field:new()
+local tempScan = smoothed.Data:copy()
 AVS:FIELD_THRESHOLD( tempScan, smoothed.Data, 1, 255)--Flatten
 AVS:FIELD_OPS(smoothed.Data, smoothed.Data, 5, AVS.FIELD_OPS_Closing)--Closing filter to minimise # of volumes
-
+print("smoothed")
 --spine burn
 spine = Scan:new()
 spine:setup()
-local delin = wm.Delineation.SC or wm.Delineation.cord
+local delin = wm.Delineation.SC or wm.Delineation.cord or wm.Delineation.SCanal or wm.Delineation.SCANAL or wm.Delineation.SCord or wm.Delineation.sc
 spine = orign:burn(delin, 255, true)
 AVS:FIELD_OPS(spine.Data, spine.Data, AVS.FIELD_OPS_SignedDist)
 local spineBig = Scan:new()
@@ -259,38 +277,39 @@ local maskSmooth = Scan:new()
 maskSmooth:setup()
 maskSmooth = mask(smoothed,cHull,1)
 scans[4] = maskSmooth
-
+print("masked")
 
 local cents = field:new()
 local bubs = Scan:new()
 bubs:setup()
 local shcHull = cHull:copy()
 AVS:FIELD_OPS(shcHull.Data, shcHull.Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
-AVS:FIELD_THRESHOLD(shcHull.Data, shcHull.Data, 227)--delete everything shrink cm in
+tempScan = shcHull.Data:copy()
+AVS:FIELD_THRESHOLD(tempScan, shcHull.Data, 227)--delete everything shrink cm in
+--shcHull.Data = tempScan
 scans[1] = shcHull
-cents,bubs = bubbleCent(maskSmooth,shcHull)--find bubbles and centres
+cents,bubs = bubbleCent(maskSmooth,shcHull:copy())--find bubbles and centres
 scans[5] = bubs
-print("found centres")
 --[[print("Found centres, starting flooding")
 local halfway = (#cents-#cents%2)/2
-wm.Scan[8] = wm.Scan[1]:copy()
+local flood = orign:copy()
 --mask(8,3,8)
 for i=1,#cents do--floodfill from centre of each bubble
-  local safe = wm.Scan[8]:copy()
-  AVS:FLOODFILL(cents[i].cent, wm.Scan[8].Data, 1200, 3, 5000)
-  local bleed = hasBled(wm.Scan[8])--check for bleed
+  local safe = flood:copy()
+  AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh.value, 3, 5000)
+  local bleed = hasBled(flood)--check for bleed
   collectgarbage()
   if bleed then--if it has bled, don't include
-    wm.Scan[8] = safe:copy()
+    flood = safe:copy()
   end
   if i == halfway then
     print("Halway through flooding")
   end
 end
+scans[6] = flood
 print("Finished flooding")]]
 
 display(scans)
-print("Finished flooding")
 
 local heart = wm.Delineation.Heart or wm.Delineation.heart
 if heart then
@@ -299,8 +318,8 @@ else
   error("No heart delineation found on scan " .. currentpatientpack)
 end
 
-heartBurn = Scan:new()
-heartDist = Scan:new()
+local heartBurn = Scan:new()
+local heartDist = Scan:new()
 heartBurn:setup()
 heartDist:setup()
 heartBurn = orign:burn(heart,255,false)
@@ -315,6 +334,7 @@ for i=1,#cents do
   if distCent>=0 then
     currentInHeart=currentInHeart+1
   end
+  collectgarbage()
 end
 
 local file = io.open(basefolder .. [[inHeart.csv]],"a")
@@ -322,6 +342,17 @@ local file = io.open(basefolder .. [[inHeart.csv]],"a")
 local heartProp=currentInHeart/#cents
 file:write(currentpatientpack .. "," .. #cents .. "," .. heartProp .. "\n")
 io.close(file)
+
+wm.Scan[1].Description = "Original CT Scan"
+wm.Scan[2].Description = "Dose"
+wm.Scan[3].Description = "Mask"
+wm.Scan[4].Description = "Thresholded"
+wm.Scan[5].Description = "Smoothed"
+wm.Scan[6].Description = "Masked"
+wm.Scan[7].Description = "Calcifications"
+wm.Scan[8].Description = "Original with calcifications flooded to 5000"
+
+print("Stop")
 
 --[[inHeartTot = inHeartTot + currentInHeart
 bubblesTot = bubblesTot + #cents]]
