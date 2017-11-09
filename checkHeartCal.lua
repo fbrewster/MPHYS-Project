@@ -6,10 +6,11 @@ Finds calcifications and then checks what percentage of these are within the hea
 
 
 --basefolder = [[D:\MPHYS_Data\]]
---currentpatientpack = [[201205316.pack]]
-clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
-maxVol = 2.7--largest volumes considered a calcification
-bleedVol = 30--volume above which a fill is considred to have bled
+basefolder = [[C:\Users\Frank\MPHYS\Data\]]
+currentpatientpack = [[200509064.pack]]
+clipDist = 0.5--acceptabel distance from the centre of a bubble to the CH boundary
+maxVol = 5--largest volumes considered a calcification
+bleedVol = 10--volume above which a fill is considred to have bled
 maxVolTot = 0--to keep track of how big the bleed volumes are
 
 function getRandScan()--Gets a random scan name from the list in ..\Data
@@ -157,8 +158,8 @@ function bubbleCent (inSc,cHull)
     volTemp = labels:volume(i,i).value
     if volTemp < maxVol and volTemp>0.001 then
       AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
-      local clip = chDist(temp,clipDist,cHull)
-      if clip then
+      --local clip = chDist(temp,clipDist,cHull)
+      if true then
         local tempCent = field:new()
         AVS:FIELD_CENTER_DOT(temp, tempCent)
         table.insert( cents, {id=i, cent=tempCent})
@@ -170,15 +171,20 @@ function bubbleCent (inSc,cHull)
     collectgarbage()
   end
   
-  local output = Scan:new()
-  output:setup()
+  local output = {}
+  local outTot = Scan:new()
+  local tempBubScan = Scan:new()
+  tempBubScan:setup()
+  outTot:setup()
   
   for i = 1, #cents do
     AVS:FIELD_THRESHOLD(labels.Data, temp, cents[i].id, cents[i].id, 255, 0)
-    output.Data:add(temp)
+    outTot.Data:add(temp)
+    tempBubScan.data=temp
+    output[i] = tempBubScan:copy()
   end
   
-  return cents, output
+  return cents, outTot, output
 end
 
 function hasBled(inScan)
@@ -215,8 +221,9 @@ function hasBled(inScan)
   return bleed
 end
 
---currentpatientpack = getRandScan()
-loadpack(basefolder ..[[PackWithHearts\]] .. currentpatientpack)
+currentpatientpack = getRandScan()
+--loadpack(basefolder ..[[PackWithHearts\]] .. currentpatientpack)
+loadpack(basefolder .. [[Pack\]] .. currentpatientpack)
 --wm.Scan[1].Description = currentpatientpack
 local scans = {}
 
@@ -239,11 +246,11 @@ masked = mask(orign,cHull,1)
 local hist = masked:histogram(masked,650,3000,3000,256)
 hist.cumulative = true
 local lowThresh = hist:percentile(99)
-local floodThresh = hist:percentile(97)
+--[[local floodThresh = hist:percentile(97)
 if floodThresh.value<1135 then 
-  print([[Flood threshold's fucked mate]])
+  print("Flood threshold's fucked mate")
   floodThresh = 1135
-end
+end]]
 local highThresh = hist:max()
 print("got hist")
 --threshold into scan 4
@@ -280,68 +287,56 @@ scans[4] = maskSmooth
 print("masked")
 
 local cents = field:new()
-local bubs = Scan:new()
-bubs:setup()
+local bubTot = Scan:new()
+bubTot:setup()
+bubs = {}
 local shcHull = cHull:copy()
 AVS:FIELD_OPS(shcHull.Data, shcHull.Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
 tempScan = shcHull.Data:copy()
 AVS:FIELD_THRESHOLD(tempScan, shcHull.Data, 227)--delete everything shrink cm in
 --shcHull.Data = tempScan
 scans[1] = shcHull
-cents,bubs = bubbleCent(maskSmooth,shcHull:copy())--find bubbles and centres
-scans[5] = bubs
---[[print("Found centres, starting flooding")
+cents,bubTot,bubs = bubbleCent(maskSmooth,shcHull:copy())--find bubbles and centres
+scans[5] = bubTot
+print("Found centres, starting flooding")
 local halfway = (#cents-#cents%2)/2
 local flood = orign:copy()
+local allMask = Scan:new()
+allMask:setup()
+local shitThresh = {}
 --mask(8,3,8)
 for i=1,#cents do--floodfill from centre of each bubble
+  local currentBub = bubs[i]:copy()
+  local bubMask = Scan:new()
+  bubMask:setup()
+  AVS:FIELD_OPS(currentBub.Data, currentBub.Data, 5, AVS.FIELD_OPS_Smooth)
+  AVS:FIELD_MASK(orign.Data, currentBub.Data, bubMask.Data)
+  local bubHist = bubMask:histogram(bubMask,650,3000,3000,256)
+  bubHist.cumulative = true
+  local floodThresh = bubHist:percentile(70)
+  if floodThresh.value<1100 then 
+    floodThresh.value = 1135 
+  end
+  allMask:add(bubMask)
+  
   local safe = flood:copy()
   AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh.value, 3, 5000)
   local bleed = hasBled(flood)--check for bleed
   collectgarbage()
   if bleed then--if it has bled, don't include
     flood = safe:copy()
+    shitThresh[i] = floodThresh.value 
   end
   if i == halfway then
     print("Halway through flooding")
   end
 end
 scans[6] = flood
-print("Finished flooding")]]
+print("Finished flooding")
 
+scans[1] = allMask
 display(scans)
 
-local heart = wm.Delineation.Heart or wm.Delineation.heart
-if heart then
-  print("heart delin found")
-else
-  error("No heart delineation found on scan " .. currentpatientpack)
-end
-
-local heartBurn = Scan:new()
-local heartDist = Scan:new()
-heartBurn:setup()
-heartDist:setup()
-heartBurn = orign:burn(heart,255,false)
-AVS:FIELD_OPS(heartBurn.Data, heartDist.Data, AVS.FIELD_OPS_SignedDist)
-
-local currentInHeart = 0
-for i=1,#cents do
-  local distF = field:new()
-  AVS:FIELD_SAMPLE(cents[i].cent, heartDist.Data, distF)
-  local dist = distF:getvalue(0)--extract distance value
-  local distCent = (dist.value - 127)/100
-  if distCent>=0 then
-    currentInHeart=currentInHeart+1
-  end
-  collectgarbage()
-end
-
-local file = io.open(basefolder .. [[inHeart.csv]],"a")
-
-local heartProp=currentInHeart/#cents
-file:write(currentpatientpack .. "," .. #cents .. "," .. heartProp .. "\n")
-io.close(file)
 
 wm.Scan[1].Description = "Original CT Scan"
 wm.Scan[2].Description = "Dose"

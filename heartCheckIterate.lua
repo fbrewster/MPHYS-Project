@@ -255,7 +255,7 @@ function checkHeartCal(currentpatientpack)
     AVS:FIELD_SAMPLE(cents[i].cent, heartDist.Data, distF)
     local dist = distF:getvalue(0)--extract distance value
     local distCent = (dist.value - 127)/100
-    if distCent>=0 then
+    if distCent>=-0.5 then
       currentInHeart=currentInHeart+1
     end
     collectgarbage()
