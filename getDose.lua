@@ -6,11 +6,11 @@ Finds calcifications and then checks what percentage of these are within the hea
 
 
 --basefolder = [[D:\MPHYS_Data\]]
-basefolder = [[D:\MPHYS\Data\]]
-currentpatientpack = [[201306083.pack]]
+basefolder = [[C:\Users\Frank\MPHYS\Data\]]
+currentpatientpack = [[200509064.pack]]
 clipDist = 0.5--acceptabel distance from the centre of a bubble to the CH boundary
-maxVol = 10--largest volumes considered a calcification
-bleedVol = 5--volume above which a fill is considred to have bled
+maxVol = 5--largest volumes considered a calcification
+bleedVol = 10--volume above which a fill is considred to have bled
 maxVolTot = 0--to keep track of how big the bleed volumes are
 
 function getRandScan()--Gets a random scan name from the list in ..\Data
@@ -314,7 +314,7 @@ for i=1,#cents do--floodfill from centre of each bubble
   local bubHist = bubMask:histogram(bubMask,650,3000,3000,256)
   bubHist.cumulative = true
   local floodThresh = bubHist:percentile(70)
-  if floodThresh.value<1135 then 
+  if floodThresh.value<1100 then 
     floodThresh.value = 1135 
   end
   allMask:add(bubMask)
@@ -337,7 +337,7 @@ print("Finished flooding")
 scans[1] = allMask
 display(scans)
 
-
+--[[
 wm.Scan[1].Description = "Original CT Scan"
 wm.Scan[2].Description = "Dose"
 wm.Scan[3].Description = "Mask"
@@ -345,7 +345,22 @@ wm.Scan[4].Description = "Thresholded"
 wm.Scan[5].Description = "Smoothed"
 wm.Scan[6].Description = "Masked"
 wm.Scan[7].Description = "Calcifications"
-wm.Scan[8].Description = "Original with calcifications flooded to 5000"
+wm.Scan[8].Description = "Original with calcifications flooded to 5000"]]
+
+local dummy = field:new()
+local bubFlood = Scan:new()
+bubFlood:setup()
+totBubFlood = Scan:new()
+totBubFlood:setup()
+AVS:FIELD_THRESHOLD( flood.Data, totBubFlood.Data, 5000,5000)
+AVS:FIELD_TO_INT( totBubFlood.Data, bubFlood.Data )
+AVS:FIELD_LABEL( bubFlood.Data, bubFlood.Data, dummy, AVS.FIELD_LABEL_3D, 1)
+for i=1,#cents do
+  AVS:FIELD_THRESHOLD( bubFlood.Data, tempScan, 
+  local bubHist = 
+end
+
+
 
 print("Stop")
 
