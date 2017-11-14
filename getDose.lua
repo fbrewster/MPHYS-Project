@@ -6,7 +6,7 @@ Finds calcifications and then checks what percentage of these are within the hea
 
 
 --basefolder = [[D:\MPHYS_Data\]]
-basefolder = [[C:\Users\Frank\MPHYS\Data\]]
+basefolder = [[D:\MPHYS\Data\]]
 currentpatientpack = [[200509064.pack]]
 clipDist = 0.5--acceptabel distance from the centre of a bubble to the CH boundary
 maxVol = 5--largest volumes considered a calcification
@@ -352,14 +352,21 @@ local bubFlood = Scan:new()
 bubFlood:setup()
 totBubFlood = Scan:new()
 totBubFlood:setup()
-AVS:FIELD_THRESHOLD( flood.Data, totBubFlood.Data, 5000,5000)
+AVS:FIELD_THRESHOLD( flood.Data, totBubFlood.Data, 4999,5001)
+AVS:FIELD_OPS(totBubFlood.Data, totBubFlood.Data, 2, AVS.FIELD_OPS_Smooth)
+tempScan = totBubFlood.Data:copy()
+AVS:FIELD_THRESHOLD(tempScan, totBubFlood.Data, 1, 255)
 AVS:FIELD_TO_INT( totBubFlood.Data, bubFlood.Data )
 AVS:FIELD_LABEL( bubFlood.Data, bubFlood.Data, dummy, AVS.FIELD_LABEL_3D, 1)
+local doseScan = wm.Scan[2]:copy()
+local temp = Scan:new()
+temp:setup()
+local meanDose = {}
 for i=1,#cents do
-  AVS:FIELD_THRESHOLD( bubFlood.Data, tempScan, 
-  local bubHist = 
+  AVS:FIELD_THRESHOLD( bubFlood.Data, temp.Data, i, i)
+  local bubHist = temp:histogram(doseScan, 1, 1000, 1000, 100)
+  meanDose[i] = bubHist:mean()
 end
-
 
 
 print("Stop")
