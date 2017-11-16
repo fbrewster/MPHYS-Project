@@ -250,9 +250,10 @@ function checkHeartCal(currentpatientpack)
   local temp = Scan:new()
   temp:setup()
   local meanDose = {}
+  local maxDose = doseScan.Data:max().value
   for i=1,#cents do
     AVS:FIELD_THRESHOLD( bubFlood.Data, temp.Data, i, i)
-    local bubHist = temp:histogram(doseScan, 1, 1000, 1000, 100)
+    local bubHist = temp:histogram(doseScan, 1, maxDose, maxDose, maxDose)
     meanDose[i] = bubHist:mean()
   end
 

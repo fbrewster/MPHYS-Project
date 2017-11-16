@@ -42,9 +42,11 @@ end
 function display(scans)
   for i=1,#scans do
     local j= i+2
-    wm.Scan[j] = scans[i]
+    wm.Scan[j] = scans[i]:copy()
   end
+  newlinkedpage:activate()
 end
+
 
 function lungConvexHull()--Makes a convex hull from the delineation of both lungs
   
@@ -221,9 +223,9 @@ function hasBled(inScan)
   return bleed
 end
 
-currentpatientpack = getRandScan()
---loadpack(basefolder ..[[PackWithHearts\]] .. currentpatientpack)
-loadpack(basefolder .. [[Pack\]] .. currentpatientpack)
+--currentpatientpack = getRandScan()
+loadpack(basefolder ..[[PackWithHearts\]] .. currentpatientpack)
+--loadpack(basefolder .. [[Pack\]] .. currentpatientpack)
 --wm.Scan[1].Description = currentpatientpack
 local scans = {}
 
@@ -286,6 +288,7 @@ maskSmooth = mask(smoothed,cHull,1)
 scans[4] = maskSmooth
 print("masked")
 
+
 local cents = field:new()
 local bubTot = Scan:new()
 bubTot:setup()
@@ -305,18 +308,19 @@ local allMask = Scan:new()
 allMask:setup()
 local shitThresh = {}
 --mask(8,3,8)
+
 for i=1,#cents do--floodfill from centre of each bubble
   local currentBub = bubs[i]:copy()
   local bubMask = Scan:new()
   bubMask:setup()
-  AVS:FIELD_OPS(currentBub.Data, currentBub.Data, 5, AVS.FIELD_OPS_Smooth)
+  AVS:FIELD_OPS(currentBub.Data, currentBub.Data, 4, AVS.FIELD_OPS_Smooth3)
   AVS:FIELD_MASK(orign.Data, currentBub.Data, bubMask.Data)
   local bubHist = bubMask:histogram(bubMask,650,3000,3000,256)
   bubHist.cumulative = true
   local floodThresh = bubHist:percentile(70)
-  if floodThresh.value<1100 then 
-    floodThresh.value = 1135 
-  end
+  --if floodThresh.value<1100 then 
+    --floodThresh.value = 1135 
+  --end
   allMask:add(bubMask)
   
   local safe = flood:copy()
@@ -326,6 +330,11 @@ for i=1,#cents do--floodfill from centre of each bubble
   if bleed then--if it has bled, don't include
     flood = safe:copy()
     shitThresh[i] = floodThresh.value 
+    AVS:FLOODFILL(cents[i].cent, flood.Data, 1135, 3, 5000)
+    local bleed2 = hasBled(flood)
+    if bleed2 then
+      flood = safe:copy()
+    end
   end
   if i == halfway then
     print("Halway through flooding")
@@ -348,7 +357,7 @@ wm.Scan[7].Description = "Calcifications"
 wm.Scan[8].Description = "Original with calcifications flooded to 5000"]]
 
 local dummy = field:new()
-local bubFlood = Scan:new()
+--[[local bubFlood = Scan:new()
 bubFlood:setup()
 totBubFlood = Scan:new()
 totBubFlood:setup()
@@ -361,12 +370,23 @@ AVS:FIELD_LABEL( bubFlood.Data, bubFlood.Data, dummy, AVS.FIELD_LABEL_3D, 1)
 local doseScan = wm.Scan[2]:copy()
 local temp = Scan:new()
 temp:setup()
-local meanDose = {}
+local medianDose = {}
+local maxDose = doseScan.Data:max().value
+maxDose = (maxDose - maxDose%1) + 1
 for i=1,#cents do
   AVS:FIELD_THRESHOLD( bubFlood.Data, temp.Data, i, i)
-  local bubHist = temp:histogram(doseScan, 1, 1000, 1000, 100)
-  meanDose[i] = bubHist:mean()
-end
+  local bubHist = temp:histogram(doseScan, 254, 256, 100, 50)
+  local median = bubHist:percentile(50).value
+  if median>0 then
+    table.insert(medianDose, median)
+  end
+  if median == 1 then
+    wm.Marker[1]:fit(temp)
+    wm.Marker[1]:gotomarker()
+    print("wierd median")
+  end
+  collectgarbage()
+end]]
 
 
 print("Stop")
