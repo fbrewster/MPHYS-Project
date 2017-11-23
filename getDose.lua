@@ -7,11 +7,13 @@ Finds calcifications and then checks what percentage of these are within the hea
 
 --basefolder = [[D:\MPHYS_Data\]]
 basefolder = [[D:\MPHYS\Data\]]
-currentpatientpack = [[200509064.pack]]
-clipDist = 0.5--acceptabel distance from the centre of a bubble to the CH boundary
-maxVol = 5--largest volumes considered a calcification
+currentpatientpack = [[201107440.pack]]--201011394  201013549  200509064
+clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
+maxVol = 15--largest volumes considered a calcification
 bleedVol = 10--volume above which a fill is considred to have bled
 maxVolTot = 0--to keep track of how big the bleed volumes are
+floodVol = 0
+lastFloodVol = 0
 
 function getRandScan()--Gets a random scan name from the list in ..\Data
   local file = io.open(basefolder..[[list.txt]])--open list
@@ -44,13 +46,14 @@ function display(scans)
     local j= i+2
     wm.Scan[j] = scans[i]:copy()
   end
-  newlinkedpage:activate()
+  --fusedscans:activate()
 end
 
 
 function lungConvexHull()--Makes a convex hull from the delineation of both lungs
   
   local lungs = wm.Delineation.Both_Lungs or wm.Delineation.Lungs or wm.Delineation.Both_Lung --get lung delineation
+  --local lungs = wm.Delineation.body or wm.Delineation.Body or wm.Delineation.Both_Lungs or wm.Delineation.Lungs or wm.Delineation.Both_Lung
    
   local chIndex = Field:new()--create index for CH
   AVS:CONVEX_HULL( lungs.Dots, chIndex )--make CH index from lung delin
@@ -103,14 +106,14 @@ end
 
 
 
-function chDist(bubble, clipDist, chIn)--Checks if a bubble is too close to the convex hull in scan 3
-
+function chDist(bubble, cDist, chIn)--Checks if a bubble is too close to the convex hull in scan 3
+  local chTemp = chIn:copy()
   
-  AVS:FIELD_OPS(chIn.Data, chIn.Data, AVS.FIELD_OPS_SignedDist)--turn ch into a distance measure
+  AVS:FIELD_OPS(chTemp.Data, chTemp.Data, AVS.FIELD_OPS_SignedDist)--turn ch into a distance measure
   local centre = Field:new()
   AVS:FIELD_CENTER_DOT(bubble, centre)-- put the centre of bubble into centre
   local distF = Field:new()
-  AVS:FIELD_SAMPLE(centre, chIn.Data, distF)-- sample the field ch at all the points in centre and output to dist
+  AVS:FIELD_SAMPLE(centre, chTemp.Data, distF)-- sample the field ch at all the points in centre and output to dist
   --print(distF:getvalue(0))
   local dist = distF:getvalue(0)--extract distance value
   local distCent = (dist.value - 127)/100--convert to cm from CH boundary
@@ -119,7 +122,7 @@ function chDist(bubble, clipDist, chIn)--Checks if a bubble is too close to the 
   
   local clip = true
   
-  if distAbs<clipDist then-- if the distance from the centre of the bubble to the ch is less than clipDist the return false
+  if distAbs<cDist then-- if the distance from the centre of the bubble to the ch is less than clipDist the return false
      clip = false
   end
   
@@ -142,15 +145,15 @@ function bubbleCent (inSc,cHull)
   if nBubbles>2000 then
     wm.Scan[4] = inSc:copy()
     print("Too many bubbles! " .. nBubbles .. " Pack: " .. currentpatientpack)
-    AVS:FIELD_OPS( inSc.Data, inSc.Data, 1, AVS.FIELD_OPS_Smooth )
-    AVS:FIELD_TO_INT( inSc.Data, labels.Data)
+    local inScSml = mask (inSc, cHull, 1)
+    AVS:FIELD_TO_INT( inScSml.Data, labels.Data)
     AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
     nBubbles = labels.Data:max().value
     if nBubbles>2000 then
       wm.Scan[4] = inSc:copy()
-      error("Tried smoothing again but still too many bubbles. " .. nBubbles)
+      error("Tried a smaller mask but still too many bubbles. " .. nBubbles)
     else
-      print("Smoothing again worked")
+      print("A smaller mask worked")
     end
   end
   print('# of bubbles: ' .. nBubbles)
@@ -160,7 +163,7 @@ function bubbleCent (inSc,cHull)
     volTemp = labels:volume(i,i).value
     if volTemp < maxVol and volTemp>0.001 then
       AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
-      --local clip = chDist(temp,clipDist,cHull)
+      local clip = chDist(temp,clipDist,cHull)
       if true then
         local tempCent = field:new()
         AVS:FIELD_CENTER_DOT(temp, tempCent)
@@ -223,6 +226,18 @@ function hasBled(inScan)
   return bleed
 end
 
+function hasBled2(inScan)
+  local vol = inScan:volume(5000,5000).value
+  local bled = false
+  local newVol = vol-lastFloodVol
+  if newVol>maxVol then
+    bled = true
+  else
+    lastFloodVol = vol
+  end
+  return bled
+end
+
 --currentpatientpack = getRandScan()
 loadpack(basefolder ..[[PackWithHearts\]] .. currentpatientpack)
 --loadpack(basefolder .. [[Pack\]] .. currentpatientpack)
@@ -244,7 +259,7 @@ lungCH,cHull = lungConvexHull()
 
 local masked = Scan:new()
 masked:setup()
-masked = mask(orign,cHull,1)
+masked = mask(orign,cHull,0.7)
 local hist = masked:histogram(masked,650,3000,3000,256)
 hist.cumulative = true
 local lowThresh = hist:percentile(99)
@@ -270,13 +285,23 @@ local tempScan = smoothed.Data:copy()
 AVS:FIELD_THRESHOLD( tempScan, smoothed.Data, 1, 255)--Flatten
 AVS:FIELD_OPS(smoothed.Data, smoothed.Data, 5, AVS.FIELD_OPS_Closing)--Closing filter to minimise # of volumes
 print("smoothed")
+
 --spine burn
 spine = Scan:new()
 spine:setup()
-local delin = wm.Delineation.SC or wm.Delineation.cord or wm.Delineation.SCanal or wm.Delineation.SCANAL or wm.Delineation.SCord or wm.Delineation.sc
+local delin = wm.Delineation.SC or wm.Delineation.cord or wm.Delineation.SCanal or wm.Delineation.SCANAL or wm.Delineation.SCord or wm.Delineation.sc-- or wm.Delineation[S Canal] or wm.Delineation[s canal]
 spine = orign:burn(delin, 255, true)
-AVS:FIELD_OPS(spine.Data, spine.Data, AVS.FIELD_OPS_SignedDist)
+local kern = Field:new("field 3D float", 3,3,3)
+spineWarp = Scan:new()
+spineWarp:setup()
+
+AVS:MAKE_KERNEL(kern, kern, AVS.MAKE_KERNEL_Gradient, AVS.MAKE_KERNEL_Rectangle, AVS.MAKE_KERNEL_None, 1, 0,0,1)
+--AVS:FILTER_WITH_KERNEL(spine.data, kern,spineWarp.Data)
+--wm.Scan[3] = spineWarp:copy()]]
+--AVS:FIELD_OPS(spine.Data, spine.Data, AVS.FIELD_OPS_SignedDist)
 local spineBig = Scan:new()
+spineBig:setup()
+AVS:FIELD_OPS(spine.Data, spine.Data, 15, AVS.FIELD_OPS_Smooth3)
 AVS:FIELD_THRESHOLD(spine.Data, spineBig.Data,1)
 smoothed.Data:add(spineBig.Data)
 scans[3] = smoothed
@@ -284,7 +309,7 @@ scans[3] = smoothed
 --Mask with CH and put in scan 6. Shrink by 1cm
 local maskSmooth = Scan:new()
 maskSmooth:setup()
-maskSmooth = mask(smoothed,cHull,1)
+maskSmooth = mask(smoothed,cHull,0.7)
 scans[4] = maskSmooth
 print("masked")
 
@@ -296,14 +321,14 @@ bubs = {}
 local shcHull = cHull:copy()
 AVS:FIELD_OPS(shcHull.Data, shcHull.Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
 tempScan = shcHull.Data:copy()
-AVS:FIELD_THRESHOLD(tempScan, shcHull.Data, 227)--delete everything shrink cm in
+AVS:FIELD_THRESHOLD(tempScan, shcHull.Data, 197)--delete everything shrink cm in
 --shcHull.Data = tempScan
 scans[1] = shcHull
 cents,bubTot,bubs = bubbleCent(maskSmooth,shcHull:copy())--find bubbles and centres
 scans[5] = bubTot
 print("Found centres, starting flooding")
 local halfway = (#cents-#cents%2)/2
-local flood = orign:copy()
+local flood = masked:copy()
 local allMask = Scan:new()
 allMask:setup()
 local shitThresh = {}
@@ -317,21 +342,23 @@ for i=1,#cents do--floodfill from centre of each bubble
   AVS:FIELD_MASK(orign.Data, currentBub.Data, bubMask.Data)
   local bubHist = bubMask:histogram(bubMask,650,3000,3000,256)
   bubHist.cumulative = true
-  local floodThresh = bubHist:percentile(70)
-  --if floodThresh.value<1100 then 
-    --floodThresh.value = 1135 
-  --end
+  local floodThresh = bubHist:percentile(80).value
+  if floodThresh<1100 then 
+    floodThresh = 1135 
+  end
   allMask:add(bubMask)
   
   local safe = flood:copy()
-  AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh.value, 3, 5000)
-  local bleed = hasBled(flood)--check for bleed
+  AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)
+  
+  local bleed = hasBled2(flood)--check for bleed
   collectgarbage()
   if bleed then--if it has bled, don't include
     flood = safe:copy()
-    shitThresh[i] = floodThresh.value 
-    AVS:FLOODFILL(cents[i].cent, flood.Data, 1135, 3, 5000)
-    local bleed2 = hasBled(flood)
+    shitThresh[i] = floodThresh
+    floodThresh = bubHist:percentile(85).value
+    AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)
+    local bleed2 = hasBled2(flood)
     if bleed2 then
       flood = safe:copy()
     end
@@ -356,39 +383,51 @@ wm.Scan[6].Description = "Masked"
 wm.Scan[7].Description = "Calcifications"
 wm.Scan[8].Description = "Original with calcifications flooded to 5000"]]
 
-local dummy = field:new()
---[[local bubFlood = Scan:new()
+local null = field:new()
+local bubFlood = Scan:new()
 bubFlood:setup()
-totBubFlood = Scan:new()
+local totBubFlood = Scan:new()
 totBubFlood:setup()
-AVS:FIELD_THRESHOLD( flood.Data, totBubFlood.Data, 4999,5001)
-AVS:FIELD_OPS(totBubFlood.Data, totBubFlood.Data, 2, AVS.FIELD_OPS_Smooth)
+AVS:FIELD_THRESHOLD( flood.Data, totBubFlood.Data, 5000,5000)
+AVS:FIELD_OPS(totBubFlood.Data, totBubFlood.Data, 1, AVS.FIELD_OPS_Smooth3)
 tempScan = totBubFlood.Data:copy()
 AVS:FIELD_THRESHOLD(tempScan, totBubFlood.Data, 1, 255)
+totBubFlood:add(spineBig)
 AVS:FIELD_TO_INT( totBubFlood.Data, bubFlood.Data )
-AVS:FIELD_LABEL( bubFlood.Data, bubFlood.Data, dummy, AVS.FIELD_LABEL_3D, 1)
+AVS:FIELD_LABEL( bubFlood.Data, bubFlood.Data, null, AVS.FIELD_LABEL_3D, 1)
 local doseScan = wm.Scan[2]:copy()
-local temp = Scan:new()
-temp:setup()
+local thisBub = Scan:new()
+thisBub:setup()
+local finalBubs = Scan:new()
+finalBubs:setup()
 local medianDose = {}
 local maxDose = doseScan.Data:max().value
 maxDose = (maxDose - maxDose%1) + 1
 for i=1,#cents do
-  AVS:FIELD_THRESHOLD( bubFlood.Data, temp.Data, i, i)
-  local bubHist = temp:histogram(doseScan, 254, 256, 100, 50)
-  local median = bubHist:percentile(50).value
-  if median>0 then
-    table.insert(medianDose, median)
-  end
-  if median == 1 then
-    wm.Marker[1]:fit(temp)
-    wm.Marker[1]:gotomarker()
-    print("wierd median")
+  AVS:FIELD_THRESHOLD(bubFlood.Data, thisBub.Data, i, i)
+  if thisBub.Data:max().value>0 and thisBub:volume().value<25 then
+    --local clip = chDist(thisBub.Data, clipDist, shcHull)
+    if true then
+      local bubHist = thisBub:histogram(doseScan, 255, 255, 100, 100)
+      bubHist.cumulative = true
+      local median = bubHist:percentile(50).value
+      if median>0 then
+        table.insert(medianDose, median)
+      end
+      --[[if median == 1 then
+        wm.Marker[1]:fit(thisBub)
+        wm.Marker[1]:gotomarker()
+        print("wierd median")
+      end]]
+      finalBubs:add(thisBub)
+    end
   end
   collectgarbage()
-end]]
+  thisBub.Data:clear()
+end
 
-
+wm.Scan[3]=finalBubs:copy()
+collectgarbage()
 print("Stop")
 
 --[[inHeartTot = inHeartTot + currentInHeart
