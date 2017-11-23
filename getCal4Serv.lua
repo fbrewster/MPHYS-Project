@@ -1,35 +1,34 @@
---Check Heart Calcifications
+--Get calcifications for server
 --[[
 Frank Brewster
-Finds calcifications and then checks what percentage of these are within the heart delineation
+Finds calcifications and and outputs a mask of these as well as total calcification volumes
 ]]--
 
 
 basefolder = [[D:\MPHYS\Data\]]
+dataFileName = [[SamplePacks\]]
+xdrFolder = string.gsub(dataFileName, [[\]], [[Xdr\]])
 clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
 maxVol = 5--largest volumes considered a calcification
 bleedVol = 10--volume above which a fill is considred to have bled
 maxVolTot = 0--to keep track of how big the bleed volumes are
-floodVol = 0
-lastFloodVol = 0
+floodVol = 0--used to check for new flooded volumes
+lastFloodVol = 0--""
+totCalVols = {}
 
-local log = io.open(basefolder .. [[log.txt]])
-local fileList = io.open(basefolder .. [[list.txt]])
-local fNames = {}
-local index  = 1
 
-if fileList then
-  for line in fileList:lines() do
-    fNames[index] = unpack(line:split(" "))
-    index = index +1
+
+local function scandir(directory)
+  local i, t, popen = 0, {}, io.popen
+  for filename in popen('dir "'..directory..'" /o:n /b /a-d'):lines() do
+    i = i + 1
+    t[i] = filename
   end
-else
-  error("No file name list could be found")
+  return t
 end
-io.close(fileList)
 
 
-function TScan:setup()
+function TScan:setup()--sets adjust and transform
   self.adjust = mAdjust
   self.Transform = mTrans
 end
@@ -63,25 +62,24 @@ function lungConvexHull()--Makes a convex hull from the delineation of both lung
   newDel.Index = delChIndex
   
   local cHull = Scan:new()
-  cHull.Adjust = mAdjust
-  cHull.Transform = mTrans
+  cHull:setup()
   
-  cHull = wm.Scan[1]:burn(newDel, 255, false)--burn delineation onto scan 3
+  cHull = wm.Scan[1]:burn(newDel, 255, false)--burn delineation in cHull
   cHull.Description = "Lung Convex Hull Delineation"
   
-  return newDel, cHull
+  return newDel, cHull--return ch delineation and burnt mask
 end
 
 
 function mask(input, cHull, lShrink)--masks scan[input] with scan[cHull], shrunk by "shrink" and outputs to scan[output]
-  local ch = cHull:copy()
+  local ch = cHull:copy()--to avoid editing of original ch
   lShrink = (lShrink*100)+127--convert to threshold value
   --Exclude data outside of CH
   local output = Scan:new() 
   output:setup()
   --need to shrink scan
   AVS:FIELD_OPS(ch.Data, ch.Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
-  local temp = ch:copy()
+  local temp = ch:copy()--threshold can't have same input and output
   AVS:FIELD_THRESHOLD(temp.Data, ch.Data, lShrink)--delete everything shrink cm in
   AVS:FIELD_MASK(input.Data, ch.Data, output.Data)--delete outside of new shrunk mask
   ch.Description = [[Convex hull shrunk by <shrink>]]
@@ -91,8 +89,8 @@ end
 
 
 
-function chDist(bubble, cDist, chIn)--Checks if a bubble is too close to the convex hull in scan 3
-  local chTemp = chIn:copy()
+function chDist(bubble, cDist, chIn)--Checks if a bubble is too close (<cDist) to the convex hull (chIn)
+  local chTemp = chIn:copy()--avoid editing the original ch
   
   AVS:FIELD_OPS(chTemp.Data, chTemp.Data, AVS.FIELD_OPS_SignedDist)--turn ch into a distance measure
   local centre = Field:new()
@@ -112,46 +110,40 @@ function chDist(bubble, cDist, chIn)--Checks if a bubble is too close to the con
   return clip
 end
 
-function bubbleCent (inSc,cHull) 
+function bubbleCent (inSc,cHull)--finds the connected pixels and their centres
   
   local dummy = field:new()
   local labels = Scan:new()
   labels:setup()
   local temp = Field:new()
-  print("start bubble")
-  AVS:FIELD_TO_INT( inSc.Data, labels.Data)
-  AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
+  AVS:FIELD_TO_INT( inSc.Data, labels.Data)--turn to integer values
+  AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )--find connected pixels and label volumes
   
   local  cents = {}
   local nBubbles = labels.Data:max().value
   local volTemp = Double:new()
-  if nBubbles>2000 then
-    wm.Scan[4] = inSc:copy()
+  if nBubbles>2000 then--make sure too many bubbles haven't been found
     log:write("Too many bubbles! " .. nBubbles .. " Pack: " .. currentpatientpack .. "\n")
-    AVS:FIELD_OPS( inSc.Data, inSc.Data, 1, AVS.FIELD_OPS_Smooth )
-    AVS:FIELD_TO_INT( inSc.Data, labels.Data)
+    local inScSml = mask (inSc, cHull, 1)-- if there are too many bubbles, shrink the CH and try again
+    AVS:FIELD_TO_INT( inScSml.Data, labels.Data)--as above
     AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
     nBubbles = labels.Data:max().value
     if nBubbles>2000 then
-      wm.Scan[4] = inSc:copy()
-      error("Tried smoothing again but still too many bubbles. " .. nBubbles)
+      error("Tried a smaller mask but still too many bubbles. " .. nBubbles .. "\n")--leave scan if still too many bubbles
     else
-      log:write("Smoothing again worked" .. "\n")
+      log:write("A smaller mask worked" .. "\n")
     end
   end
-  log:write('# of bubbles: ' .. nBubbles .. "\n")
+  log:write('# of bubbles: ' .. nBubbles .. "\n")--write number of bubbles initally found to log
 
   
   for i = 1,nBubbles do
     volTemp = labels:volume(i,i).value
-    if volTemp < maxVol and volTemp>0.001 then
-      AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)
-      local clip = chDist(temp,clipDist,cHull)
-      if true then
-        local tempCent = field:new()
-        AVS:FIELD_CENTER_DOT(temp, tempCent)
-        table.insert( cents, {id=i, cent=tempCent})
-      end
+    if volTemp < maxVol and volTemp>0.001 then--check to see if volumes are too small or too large
+      AVS:FIELD_THRESHOLD( labels.Data, temp, i, i, 255, 0)--extract that bubble
+      local tempCent = field:new()
+      AVS:FIELD_CENTER_DOT(temp, tempCent)--find centre of bubble
+      table.insert( cents, {id=i, cent=tempCent})--add the bubble to a table
     end
     collectgarbage()
   end
@@ -162,7 +154,7 @@ function bubbleCent (inSc,cHull)
   tempBubScan:setup()
   outTot:setup()
   
-  for i = 1, #cents do
+  for i = 1, #cents do--add all the passed bubble to one scan
     AVS:FIELD_THRESHOLD(labels.Data, temp, cents[i].id, cents[i].id, 255, 0)
     outTot.Data:add(temp)
     tempBubScan.data=temp
@@ -172,45 +164,12 @@ function bubbleCent (inSc,cHull)
   return cents, outTot, output
 end
 
-function hasBled(inScan)
-  local inThr = Scan:new()
-  local labels = Scan:new()
-  inThr.Adjust = mAdjust
-  inThr.Transform = mTrans
-  labels.Adjust = mAdjust
-  labels.Transform = mTrans
-  local dummy = field:new()
-  local volTemp,volTot = Double:new()
-  volTot = 0
-  
-  AVS:FIELD_THRESHOLD(inScan.Data, inThr.Data, 5000, 5000, 255, 0)
-  
-  AVS:FIELD_TO_INT(inThr.Data, labels.Data)
-  AVS:FIELD_LABEL( labels.Data, labels.Data, dummy, AVS.FIELD_LABEL_3D, 1 )
-  
-  local nBubbles = labels.Data:max().value
-  
-  for i=1,nBubbles do
-    volTemp = labels:volume(i,i).value
-    volTot = volTot+volTemp
-  end
 
-  
-  local bleed = false
-  if volTot>=bleedVol then
-    bleed = true
-  elseif volTot>maxVolTot then
-    maxVolTot=volTot
-  end
-  
-  return bleed
-end
-
-function hasBled2(inScan)
-  local vol = inScan:volume(5000,5000).value
+function hasBled2(inScan)--make a flood hasn't bled
+  local vol = inScan:volume(5000,5000).value--take all flooded volume
   local bled = false
-  local newVol = vol-lastFloodVol
-  if newVol>maxVol then
+  local newVol = vol-lastFloodVol--amount volume had changed by = recently flooded volume 
+  if newVol>maxVol then--if there has been a bleed, return true
     bled = true
   else
     lastFloodVol = vol
@@ -219,10 +178,9 @@ function hasBled2(inScan)
 end
 
 
-for fileNum=1,index-1 do
-  local currentpatientpack = fNames[fileNum]
-  log:write(currentpatientpack .. "\n")
-  loadpack(basefolder ..[[PackWithHearts\]] .. currentpatientpack)
+
+
+function getCal()--find calcifications and write them out to a xdr file
   local scans = {}
 
   --set master adjust and transform.
@@ -240,16 +198,16 @@ for fileNum=1,index-1 do
 
   local masked = Scan:new()
   masked:setup()
-  masked = mask(orign,cHull,0.7)
-  local hist = masked:histogram(masked,650,3000,3000,256)
+  masked = mask(orign,cHull,0.7)--mask image by shrunk ch
+  local hist = masked:histogram(masked,650,3000,3000,256)--get histogram of masked scan
   hist.cumulative = true
-  local lowThresh = hist:percentile(99)
-  local highThresh = hist:max()
+  local lowThresh = hist:percentile(99)--find 99th percentile pixel value
+  local highThresh = hist:max()--find largest pixel value
 
   --threshold into scan 4
   local threshed = Scan:new()
   threshed:setup()
-  AVS:FIELD_THRESHOLD( orign.Data, threshed.Data, lowThresh.value, highThresh.value )
+  AVS:FIELD_THRESHOLD( orign.Data, threshed.Data, lowThresh.value, highThresh.value )--threshold between 99th percentile and max
   scans[2] = threshed
 
   --Smooth and put in scan 5
@@ -259,29 +217,27 @@ for fileNum=1,index-1 do
   local tempScan = smoothed.Data:copy()
   AVS:FIELD_THRESHOLD( tempScan, smoothed.Data, 1, 255)--Flatten
   AVS:FIELD_OPS(smoothed.Data, smoothed.Data, 5, AVS.FIELD_OPS_Closing)--Closing filter to minimise # of volumes
-  print("smoothed")
 
   --spine burn
-  spine = Scan:new()
+  local spine = Scan:new()
   spine:setup()
-  local delin = wm.Delineation.SC or wm.Delineation.cord or wm.Delineation.SCanal or wm.Delineation.SCANAL or wm.Delineation.SCord or wm.Delineation.sc or wm.Delineation.[S Canal] or wm.Delineation.[s canal]
-  spine = orign:burn(delin, 255, true)
-  local kern = Field:new("field 3D float", 3,3,3)
-  spineWarp = Scan:new()
-  spineWarp:setup()
-
-  AVS:MAKE_KERNEL(kern, kern, AVS.MAKE_KERNEL_Gradient, AVS.MAKE_KERNEL_Rectangle, AVS.MAKE_KERNEL_None, 1, 0,0,1)
   local spineBig = Scan:new()
   spineBig:setup()
-  AVS:FIELD_OPS(spine.Data, spine.Data, 15, AVS.FIELD_OPS_Smooth3)
-  AVS:FIELD_THRESHOLD(spine.Data, spineBig.Data,1)
-  smoothed.Data:add(spineBig.Data)
+  local delin = wm.Delineation.SC or wm.Delineation.cord or wm.Delineation.SCanal or wm.Delineation.SCANAL or wm.Delineation.SCord or wm.Delineation.sc--find spine delineation
+  if delin then--if there is a spine delin with one of these names
+    spine = orign:burn(delin, 255, true)--burn the delin
+    AVS:FIELD_OPS(spine.Data, spine.Data, 15, AVS.FIELD_OPS_Smooth3)--smooth out the burn
+    AVS:FIELD_THRESHOLD(spine.Data, spineBig.Data,1)--flatten the smoothing
+    smoothed.Data:add(spineBig.Data)--add it to the smoothed scan
+  else
+    log:write("No spine delineation found" .. "\n")--create prompt if no spine delin
+  end
   scans[3] = smoothed
 
   --Mask with CH and put in scan 6. Shrink by 1cm
   local maskSmooth = Scan:new()
   maskSmooth:setup()
-  maskSmooth = mask(smoothed,cHull,0.7)
+  maskSmooth = mask(smoothed,cHull,0.7)--mask scan by shrunk ch
   scans[4] = maskSmooth
 
 
@@ -292,7 +248,7 @@ for fileNum=1,index-1 do
   local shcHull = cHull:copy()
   AVS:FIELD_OPS(shcHull.Data, shcHull.Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
   tempScan = shcHull.Data:copy()
-  AVS:FIELD_THRESHOLD(tempScan, shcHull.Data, 197)--delete everything shrink cm in
+  AVS:FIELD_THRESHOLD(tempScan, shcHull.Data, 197)--shrink it
   scans[1] = shcHull
   cents,bubTot,bubs = bubbleCent(maskSmooth,shcHull:copy())--find bubbles and centres
   scans[5] = bubTot
@@ -304,28 +260,28 @@ for fileNum=1,index-1 do
     local currentBub = bubs[i]:copy()
     local bubMask = Scan:new()
     bubMask:setup()
-    AVS:FIELD_OPS(currentBub.Data, currentBub.Data, 4, AVS.FIELD_OPS_Smooth3)
-    AVS:FIELD_MASK(orign.Data, currentBub.Data, bubMask.Data)
-    local bubHist = bubMask:histogram(bubMask,650,3000,3000,256)
+    AVS:FIELD_OPS(currentBub.Data, currentBub.Data, 4, AVS.FIELD_OPS_Smooth3)--smooth out mask
+    AVS:FIELD_MASK(orign.Data, currentBub.Data, bubMask.Data)--create window of original scan about bubble
+    local bubHist = bubMask:histogram(bubMask,650,3000,3000,256)--get histogram of window
     bubHist.cumulative = true
-    local floodThresh = bubHist:percentile(80).value
-    if floodThresh<1100 then 
+    local floodThresh = bubHist:percentile(80).value--find 80th percentile pixel value
+    if floodThresh<1100 then--if the flood value is too low set it to min cal CT number
       floodThresh = 1135 
     end
-    allMask:add(bubMask)
+    allMask:add(bubMask)--add window to total window scan
     
     local safe = flood:copy()
-    AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)
+    AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)--floodfill from centre of bubble out to 80th percentile pixel value
     
     local bleed = hasBled2(flood)--check for bleed
     collectgarbage()
-    if bleed then--if it has bled, don't include
+    if bleed then--if it has bled, try again
       flood = safe:copy()
-      floodThresh = bubHist:percentile(83).value
-      AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)
-      local bleed2 = hasBled2(flood)
-      if bleed2 then
-        flood = safe:copy()
+      floodThresh = bubHist:percentile(83).value--try with 83rd pixel value
+      AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)--try flooding again
+      local bleed2 = hasBled2(flood)--check for bleed
+      if bleed2 then--if it has bled again
+        flood = safe:copy()--exclude it
       end
     end
   end
@@ -335,37 +291,63 @@ for fileNum=1,index-1 do
   bubFlood:setup()
   local totBubFlood = Scan:new()
   totBubFlood:setup()
-  AVS:FIELD_THRESHOLD( flood.Data, totBubFlood.Data, 5000,5000)
-  AVS:FIELD_OPS(totBubFlood.Data, totBubFlood.Data, 1, AVS.FIELD_OPS_Smooth3)
+  AVS:FIELD_THRESHOLD( flood.Data, totBubFlood.Data, 5000,5000)--take only flooded pixels
+  AVS:FIELD_OPS(totBubFlood.Data, totBubFlood.Data, 1, AVS.FIELD_OPS_Smooth3)--smooth
   tempScan = totBubFlood.Data:copy()
-  AVS:FIELD_THRESHOLD(tempScan, totBubFlood.Data, 1, 255)
-  totBubFlood:add(spineBig)
+  AVS:FIELD_THRESHOLD(tempScan, totBubFlood.Data, 1, 255)--flatten
+  if delin then --if there's a spine delin, add it
+    totBubFlood.Data:add(spineBig.Data)
+  end
   AVS:FIELD_TO_INT( totBubFlood.Data, bubFlood.Data )
-  AVS:FIELD_LABEL( bubFlood.Data, bubFlood.Data, null, AVS.FIELD_LABEL_3D, 1)
-  local doseScan = wm.Scan[2]:copy()
+  AVS:FIELD_LABEL( bubFlood.Data, bubFlood.Data, null, AVS.FIELD_LABEL_3D, 1)--find volumes and label
   local thisBub = Scan:new()
   thisBub:setup()
   local finalBubs = Scan:new()
   finalBubs:setup()
+  local val = 1--different pixel value for each volume
 
   for i=1,#cents do
-    AVS:FIELD_THRESHOLD(bubFlood.Data, thisBub.Data, i, i)
-    if thisBub.Data:max().value>0 and thisBub:volume().value<10 then
-      local bubHist = thisBub:histogram(doseScan, 255, 255, 100, 100)
-      bubHist.cumulative = true
-      local median = bubHist:percentile(50).value
-      if median>0 then
-        table.insert(medianDose, median)
-      end
-      finalBubs:add(thisBub)
+    AVS:FIELD_THRESHOLD(bubFlood.Data, thisBub.Data, i, i, val)--take one volume and give it unique pixel value
+    if thisBub.Data:max().value>0 and thisBub:volume().value<25 then--if the bubble exists and isn't too large
+      finalBubs:add(thisBub)--add it to the final bubbles
+      val = val + 1--move to next pixel value id
     end
     collectgarbage()
     thisBub.Data:clear()
   end
-
+  
+  table.insert(totCalVols, {id=currentpatientpack, vol=finalBubs:volume().value})
+  
+  local xdrName = currentpatientpack:gsub(".PACK", ".xdr")--change pack name to xdr name
+  finalBubs:write_xdr(basefolder .. xdrFolder .. xdrName)--write out final bubble xdr
   collectgarbage()
 end
 
 
+
+
+
+log = io.open(basefolder .. [[log.txt]], 'w')--log file used for error handling and debugging
+local fNames = scandir(basefolder .. dataFileName)
+
+for fileNum=1,#fNames do--go through all the files in the list
+  print(fileNum)--print the file number
+  currentpatientpack = fNames[fileNum]--find the pack name
+  log:write(currentpatientpack .. "\n")--put file name in log
+  loadpack(basefolder .. dataFileName .. currentpatientpack)
+  local status,er = xpcall(getCal, debug.traceback)--try finding calcifications. If there's an error, catch it and do a traceback
+  if not status then-- if there has been an error
+    log:write( "Falied: " .. er .. "\n")--put error message and traceback in log
+  end
+  log:write("\n")
+  collectgarbage()
+end
+
+
+local volFile = io.open(basefolder .. [[vols.csv]], 'w')
+for i=1,#totCalVols do
+  volFile:write(totCalVols[i].id .. "," .. totCalVols[i].vol .. " \n")
+end
+io.close(volFile)
 
 io.close(log)
