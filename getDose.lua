@@ -356,7 +356,7 @@ for i=1,#cents do--floodfill from centre of each bubble
   if bleed then--if it has bled, don't include
     flood = safe:copy()
     shitThresh[i] = floodThresh
-    floodThresh = bubHist:percentile(85).value
+    floodThresh = bubHist:percentile(83).value
     AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)
     local bleed2 = hasBled2(flood)
     if bleed2 then
