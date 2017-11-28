@@ -7,7 +7,7 @@ Finds calcifications and then checks what percentage of these are within the hea
 
 --basefolder = [[D:\MPHYS_Data\]]
 basefolder = [[D:\MPHYS\Data\]]
-currentpatientpack = [[201107440.pack]]--201011394  201013549  200509064
+currentpatientpack = [[199201836.pack]]--201011394  201013549  200509064
 clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
 maxVol = 15--largest volumes considered a calcification
 bleedVol = 10--volume above which a fill is considred to have bled

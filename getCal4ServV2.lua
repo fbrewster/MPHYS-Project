@@ -5,9 +5,10 @@ Finds calcifications and and outputs a mask of these as well as total calcificat
 ]]--
 
 
-basefolder = [[D:\MPHYS\Data\]]
-dataFileName = [[SamplePacks\]]
-xdrFolder = string.gsub(dataFileName, [[\]], [[Xdr\]])
+basefolder = [[T:\Lung_data\standard\]]
+dataFileName = [[Pack\]]
+outFolder = [[Calcifications\]]
+xdrFolder = outFolder .. [[masks\]]--string.gsub(dataFileName, [[\]], [[Xdr\]])
 clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
 maxVol = 15--largest volumes considered a calcification
 bleedVol = 10--volume above which a fill is considred to have bled
@@ -50,7 +51,7 @@ function lungConvexHull()--Makes a convex hull from the delineation of both lung
   AVS:TT_TO_CNT( chDots, chIndex, wm.Scan[1].Data, delChPts, delChIndex )--makes delin from dots and index
   AVS:TRANSFORM_MATH( trans, nil, trans, true )--inverts trans
   AVS:DOTXFM( delChPts, trans, delChPts )--applied inverted trans to get back
-  AVS:VRML_WRITE( delChPts, delChIndex, nil, [[c:\temp\lungsConvexHull_contoursScan.wrl]] )--writes 3d model of ch to file
+  --AVS:VRML_WRITE( delChPts, delChIndex, nil, [[c:\temp\lungsConvexHull_contoursScan.wrl]] )--writes 3d model of ch to file
   
   --clean and fix contours
   results = String:new()
@@ -122,7 +123,9 @@ function bubbleCent (inSc,cHull)--finds the connected pixels and their centres
   local  cents = {}
   local nBubbles = labels.Data:max().value
   local volTemp = Double:new()
-  if nBubbles>2000 then--make sure too many bubbles haven't been found
+  if nBubbles==0
+    error("No inital bubbles found")
+  elseif nBubbles>2000 then--make sure too many bubbles haven't been found
     log:write("Too many bubbles! " .. nBubbles .. " Pack: " .. currentpatientpack .. "\n")
     local inScSml = mask (inSc, cHull, 1)-- if there are too many bubbles, shrink the CH and try again
     AVS:FIELD_TO_INT( inScSml.Data, labels.Data)--as above
@@ -133,8 +136,6 @@ function bubbleCent (inSc,cHull)--finds the connected pixels and their centres
     else
       log:write("A smaller mask worked" .. "\n")
     end
-  elseif nBubbles==0
-    error("No inital bubbles found")
   end
   log:write('# of bubbles: ' .. nBubbles .. "\n")--write number of bubbles initally found to log
 
@@ -257,7 +258,7 @@ function getCal()--find calcifications and write them out to a xdr file
   local flood = masked:copy()
   local allMask = Scan:new()
   allMask:setup()
-  
+
   for i=1,#cents do--floodfill from centre of each bubble
     local currentBub = bubs[i]:copy()
     local bubMask = Scan:new()
@@ -318,7 +319,6 @@ function getCal()--find calcifications and write them out to a xdr file
     thisBub.Data:clear()
   end
   
-  
   local xdrName = currentpatientpack:gsub(".PACK", ".xdr")--change pack name to xdr name
   finalBubs:write_xdr(basefolder .. xdrFolder .. xdrName)--write out final bubble xdr
   collectgarbage()
@@ -335,26 +335,32 @@ end
 
 
 
-log = io.open(basefolder .. [[log.txt]], 'w')--log file used for error handling and debugging
+log = io.open(basefolder .. outFolder .. [[log.txt]], 'a')--log file used for error handling and debugging
 local fNames = scandir(basefolder .. dataFileName)
+fNames = {'197102149.pack'};
 
 for fileNum=1,#fNames do--go through all the files in the list
   print(fileNum)--print the file number
   currentpatientpack = fNames[fileNum]--find the pack name
-  log:write(currentpatientpack .. "\n")--put file name in log
-  loadpack(basefolder .. dataFileName .. currentpatientpack)
-  local status,er = xpcall(getCal, debug.traceback)--try finding calcifications. If there's an error, catch it and do a traceback
-  if not status then-- if there has been an error
-    log:write( "Falied: " .. er .. "\n")--put error message and traceback in log
+
+  if not fileexists(basefolder .. xdrFolder .. currentpatientpack:gsub(".pack", ".xdr")) and 
+     not (currentpatientpack == [[200202207.pack]]) then
+    log:write(currentpatientpack .. "\n")--put file name in log
+    loadpack(basefolder .. dataFileName .. currentpatientpack)
+    local status,er = xpcall(getCal, debug.traceback)--try finding calcifications. If there's an error, catch it and do a traceback
+    if not status then-- if there has been an error
+      log:write( "Falied: " .. er .. "\n")--put error message and traceback in log
+    end
+    log:write("\n")
+    collectgarbage()
   end
-  log:write("\n")
-  collectgarbage()
+
 end
 
 
-local volFile = io.open(basefolder .. [[vols.csv]], 'w')
+local volFile = io.open(basefolder .. outFolder .. [[vols.csv]], 'a')
 for i=1,#totCalVols do
-  volFile:write(totCalVols[i].id .. "," .. totCalVols[i].vol .. " \n")
+  volFile:write(totCalVols[i].id .. "," .. totCalVols[i].vol .. "," .. totCalVols[i].lowThr .. " \n")
 end
 io.close(volFile)
 
