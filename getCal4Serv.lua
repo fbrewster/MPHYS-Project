@@ -341,12 +341,14 @@ local fNames = scandir(basefolder .. dataFileName)
 for fileNum=1,#fNames do--go through all the files in the list
   print(fileNum)--print the file number
   currentpatientpack = fNames[fileNum]--find the pack name
-  log:write(currentpatientpack .. "\n")--put file name in log
-  loadpack(basefolder .. dataFileName .. currentpatientpack)
-  local status,er = xpcall(getCal, debug.traceback)--try finding calcifications. If there's an error, catch it and do a traceback
-  if not status then-- if there has been an error
-    log:write( "Falied: " .. er .. "\n")--put error message and traceback in log
-  end
+  if not fileexists(basefolder .. xdrFolder .. currentpatientpack:gsub(".pack", ".xdr")) and 
+     not (currentpatientpack == [[200202207.pack]]) then
+    log:write(currentpatientpack .. "\n")--put file name in log
+    loadpack(basefolder .. dataFileName .. currentpatientpack)
+    local status,er = xpcall(getCal, debug.traceback)--try finding calcifications. If there's an error, catch it and do a traceback
+    if not status then-- if there has been an error
+      log:write( "Falied: " .. er .. "\n")--put error message and traceback in log
+    end
   log:write("\n")
   collectgarbage()
 end
