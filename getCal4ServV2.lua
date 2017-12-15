@@ -5,8 +5,8 @@ Finds calcifications and and outputs a mask of these as well as total calcificat
 ]]--
 
 
-basefolder = [[D:\MPHYS\Data\]]
-dataFileName = [[SamplePacks\]]
+basefolder = [[D:\data\Lung_data\standard\]]
+dataFileName = [[Pack\]]
 outFolder = [[Calcifications\]]
 xdrFolder = outFolder .. [[masks\]]--string.gsub(dataFileName, [[\]], [[Xdr\]])
 clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
@@ -16,6 +16,7 @@ maxVolTot = 0--to keep track of how big the bleed volumes are
 floodVol = 0--used to check for new flooded volumes
 lastFloodVol = 0--""
 writeTemp = {}
+
 
 
 local function scandir(directory)
@@ -36,11 +37,14 @@ end
 
 function lungConvexHull()--Makes a convex hull from the delineation of both lungs
   
-  local lungs = wm.Delineation.Both_Lungs or wm.Delineation.Lungs or wm.Delineation.Both_Lung --get lung delineation
+  local lungs = wm.Delineation.Both_Lungs or wm.Delineation.Lungs or wm.Delineation.Both_Lung or wm.Delineation.LUNGS or wm.Delineation.both_lungs or wm.Delineation['Lungs-CTV'] --get lung delineation
   --local lungs = wm.Delineation.body or wm.Delineation.Body or wm.Delineation.Both_Lungs or wm.Delineation.Lungs or wm.Delineation.Both_Lung
-   
+  if not lungs then
+    error("No lung delineation found")
+  end
+  
   local chIndex = Field:new()--create index for CH
-  AVS:CONVEX_HULL( lungs.Dots, chIndex )--make CH index from lung delin
+  AVS:CONVEX_HULL( lungs.Dots, chIndex )--make CH index from lung delin5
   chDots = lungs.Dots--dots are the same as lung
   
   local trans = mTrans--take scan transform
@@ -164,7 +168,6 @@ function bubbleCent (inSc,cHull)--finds the connected pixels and their centres
     tempBubScan.data=temp
     output[i] = tempBubScan:copy()
   end
-  
   return cents, outTot, output
 end
 
@@ -199,9 +202,6 @@ end
 
 
 function getCal()--find calcifications and write them out to a xdr file
-  nBleed = 0
-  nDiscard = 0
-
   local scans = {}
 
   --set master adjust and transform.
@@ -216,7 +216,7 @@ function getCal()--find calcifications and write them out to a xdr file
   local cHull = Scan:new()
   cHull:setup()
   lungCH,cHull = lungConvexHull()
-
+  
   --spine burn
   local spine = Scan:new()
   spine:setup()
@@ -226,7 +226,7 @@ function getCal()--find calcifications and write them out to a xdr file
   spineBigAP:setup()
   local spineBigLR = Scan:new()
   spineBigLR:setup()
-  local delin = wm.Delineation.SC or wm.Delineation.cord or wm.Delineation.SCanal or wm.Delineation.SCANAL or wm.Delineation.SCord or wm.Delineation.sc or wm.Delineation[[s canal]]--find spine delineation
+  local delin = wm.Delineation.SC or wm.Delineation.cord or wm.Delineation.SCanal or wm.Delineation.SCANAL or wm.Delineation.SCord or wm.Delineation.sc or wm.Delineation.s_canal or wm.Delineation.S_CANAL or wm.Delineation.S_Canal or wm.Delineation.Spinal_Canal or wm.Delineation.Cord3 or wm.Delineation.spinal_canal or wm.Delineation.scanal--find spine delineation
   if delin then--if there is a spine delin with one of these names
     spine = orign:burn(delin, 255)--burn the delin
     --AVS:FIELD_OPS(spine.Data, spine.Data, 15, AVS.FIELD_OPS_Smooth3)--smooth out the burn
@@ -255,6 +255,7 @@ function getCal()--find calcifications and write them out to a xdr file
   else
     error("No spine delineation found" .. "\n")--create prompt if no spine delin
   end
+  collectgarbage()
   
   --Cut spine out of cHull
   local spineInvert = Scan:new()
@@ -264,19 +265,21 @@ function getCal()--find calcifications and write them out to a xdr file
   cHull.Data:tobyte()
   AVS:FIELD_AND(cHull.Data,spineInvert.Data,cHull.Data)
 
+
   local masked = Scan:new()
   masked:setup()
   masked = mask(orign,cHull,0.7)--mask image by shrunk ch
   local hist = masked:histogram(masked,650,3000,3000,256)--get histogram of masked scan
   hist.cumulative = true
   local lowThresh = hist:percentile(99.7).value--find 99th percentile pixel value
-  if lowThresh<1200 then
+  if lowThresh<1250 then
     lowThresh=hist:percentile(99.9).value
     if lowThresh<1135 then
       lowThresh=1135
     end
   end
   local highThresh = hist:max()--find largest pixel value
+  hist:clear()
 
   --threshold into scan 4
   local threshed = Scan:new()
@@ -287,14 +290,11 @@ function getCal()--find calcifications and write them out to a xdr file
   --Smooth and put in scan 5
   local smoothed = Scan:new()
   smoothed:setup()
-  AVS:FIELD_OPS( threshed.Data, smoothed.Data, 1, AVS.FIELD_OPS_Smooth )--Smoothing filter
+  AVS:FIELD_OPS( threshed.Data, smoothed.Data, 2, AVS.FIELD_OPS_Smooth )--Smoothing filter
   local tempScan = smoothed.Data:copy()
   AVS:FIELD_THRESHOLD( tempScan, smoothed.Data, 1, 255)--Flatten
   AVS:FIELD_OPS(smoothed.Data, smoothed.Data, 5, AVS.FIELD_OPS_Closing)--Closing filter to minimise # of volumes
 
-
-  
-  scans[3] = smoothed
 
   --Mask with CH and put in scan 6. Shrink by 1cm
   local maskSmooth = Scan:new()
@@ -336,7 +336,6 @@ function getCal()--find calcifications and write them out to a xdr file
     AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)--floodfill from centre of bubble out to 80th percentile pixel value
     
     local bleed = hasBled2(flood)--check for bleed
-    collectgarbage()
     if bleed then--if it has bled, try again
       flood = safe:copy()
       floodThresh = bubHist:percentile(90).value--try with 83rd pixel value
@@ -344,9 +343,9 @@ function getCal()--find calcifications and write them out to a xdr file
       local bleed2 = hasBled2(flood)--check for bleed
       if bleed2 then--if it has bled again
         flood = safe:copy()--exclude it
-        nBleed = nBleed+1
       end
     end
+    collectgarbage()
   end
 
   local null = field:new()
@@ -355,9 +354,8 @@ function getCal()--find calcifications and write them out to a xdr file
   local totBubFlood = Scan:new()
   totBubFlood:setup()
   AVS:FIELD_THRESHOLD( flood.Data, totBubFlood.Data, 5000,5000)--take only flooded pixels
-  --smooth
   AVS:FIELD_OPS(totBubFlood.Data, totBubFlood.Data, 2, AVS.FIELD_OPS_Closing)
-  AVS:FIELD_OPS(totBubFlood.Data, totBubFlood.Data, 1, AVS.FIELD_OPS_Smooth3)
+  AVS:FIELD_OPS(totBubFlood.Data, totBubFlood.Data, 1, AVS.FIELD_OPS_Smooth3)--smooth
   tempScan = totBubFlood.Data:copy()
   AVS:FIELD_THRESHOLD(tempScan, totBubFlood.Data, 1, 255)--flatten
   if delin then --if there's a spine delin, add it
@@ -370,8 +368,9 @@ function getCal()--find calcifications and write them out to a xdr file
   local finalBubs = Scan:new()
   finalBubs:setup()
   local val = 1--different pixel value for each volume
-  
-  for i=1,bubFlood.Data:max().value do
+  collectgarbage()
+
+  for i=1,#cents do
     AVS:FIELD_THRESHOLD(bubFlood.Data, thisBub.Data, i, i, val)--take one volume and give it unique pixel value
     if thisBub.Data:max().value>0 and thisBub:volume().value<maxVol and thisBub:volume().value>0.01 then--if the bubble exists and isn't too large
       local cross=intersect(thisBub:copy(),cHull:copy())
@@ -379,17 +378,12 @@ function getCal()--find calcifications and write them out to a xdr file
         finalBubs:add(thisBub)--add it to the final bubbles
         val = val + 1--move to next pixel value id
       end
-      --end
-    elseif thisBub:volume().value>100 then
-      nDiscard=nDiscard+1
     end
-    collectgarbage()
     thisBub.Data:clear()
+    collectgarbage()
   end
   
-  local xdrName = currentpatientpack:gsub(".pack", ".xdr")--change pack name to xdr name5
-  --finalBubs:write_xdr(basefolder .. xdrFolder .. xdrName)--write out final bubble xdr
-  collectgarbage()
+  local xdrName = currentpatientpack:gsub(".pack", ".xdr")--change pack name to xdr name
   
   if finalBubs.Data:max().value==0 then
     finalBubs = orign:copy()
@@ -407,6 +401,15 @@ function getCal()--find calcifications and write them out to a xdr file
 end
 
 
+function isBadPack()
+  local badPacks = {[[200202207.pack]],[[200100707.pack]],[[200902992.pack]],[[201005615.pack]],[[201100506.pack]],[[201008951.pack]],[[201102020.pack]],[[201103529.pack]],[[201111325.pack]],[[201112180.pack]],[[201204780.pack]],[[201214392.pack]]}
+  for index, pack in ipairs(badPacks) do
+    if pack==currentpatientpack then
+      return true
+    end
+  end
+  return false
+end
 
 
 
@@ -419,8 +422,7 @@ for fileNum=1,#fNames do--go through all the files in the list
   print(fileNum)--print the file number
   currentpatientpack = fNames[fileNum]--find the pack name
 
-  if not fileexists(basefolder .. xdrFolder .. currentpatientpack:gsub(".pack", ".xdr")) and 
-     not (currentpatientpack == [[200202207.pack]]) and not (currentpatientpack==[[desktop.ini]]) then
+  if not fileexists(basefolder .. xdrFolder .. currentpatientpack:gsub(".pack", ".xdr")) and not isBadPack() then
     log:write(currentpatientpack .. "\n")--put file name in log
     loadpack(basefolder .. dataFileName .. currentpatientpack)
     local status,er = xpcall(getCal, debug.traceback)--try finding calcifications. If there's an error, catch it and do a traceback
@@ -428,26 +430,26 @@ for fileNum=1,#fNames do--go through all the files in the list
       log:write( "Failed: " .. er .. "\n")--put error message and traceback in log
     end
     --[[status, er = xpcall(writeInfo, debug.traceback)
-    if not status the5n-- if there has been an error
+    if not status then-- if there has been an error
       log:write( "Failed: " .. er .. "\n")--put error message and traceback in log
     end]]
-    if not writeTemp.thr then
-      writeTemp.thr = 0
-    end
     if not writeTemp.vol then
-      writeTemp.vol=0
+      writeTemp.vol=[[error]]
     end
-    volFile:write(currentpatientpack .. "," .. writeTemp.vol .. "," .. writeTemp.thr .. "," .. nBleed .. "," .. nDiscard .. " \n")
+    if not writeTemp.thr then
+      writeTemp.thr=[[error]]
+    end
+    volFile:write(currentpatientpack .. "," .. writeTemp.vol .. "," .. writeTemp.thr .. " \n")
     volFile:flush()
+    log:write(os.date("Finished at %c \n"))
     log:write("---------------------------- \n")
     log:flush()
-    
-    collectgarbage()
   end
-
+  writeTemp.vol=nil
+  writeTemp.thr=nil
+  collectgarbage()
 end
 
 io.close(log)
 io.close(volFile)
 collectgarbage()
-
