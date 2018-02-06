@@ -40,6 +40,7 @@ local medianVols = {}
 local mVols = {}
 
 for i=1,#fNames do
+  print(i)
   local currentxdr = fNames[i]
   local bubs = field:new()
   --bubs:read_xdr(basefolder .. xdrFolder .. currentxdr)
@@ -53,5 +54,14 @@ for i=1,#fNames do
   medianVols[i]=median(allVols)
   mVols[i]=medianVols[i]*bubs:max().value
 end
+
+local volFile = io.open(basefolder .. outFolder .. [[mVols.csv]], 'w')
+volFile:write("ID,mVol \n")
+
+for i=1,#fNames do
+  volFile:write(fNames[i]:gsub(".xdr","") .. ',' .. mVols[i] .. '\n')
+end
+
+io.close(volFile)
 
 print("finish")

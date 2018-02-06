@@ -5,8 +5,8 @@ Finds calcifications and and outputs a mask of these as well as total calcificat
 ]]--
 
 
-basefolder = [[D:\data\Lung_data\standard\]]
-dataFileName = [[Pack\]]
+basefolder = [[D:\MPHYS\Data\]]
+dataFileName = [[SamplePacks\]]
 outFolder = [[Calcifications\]]
 xdrFolder = outFolder .. [[masks\]]--string.gsub(dataFileName, [[\]], [[Xdr\]])
 clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
@@ -38,7 +38,7 @@ end
 function lungConvexHull()--Makes a convex hull from the delineation of both lungs
   
   local lungs = wm.Delineation.Both_Lungs or wm.Delineation.Lungs or wm.Delineation.Both_Lung or wm.Delineation.LUNGS or wm.Delineation.both_lungs or wm.Delineation['Lungs-CTV'] --get lung delineation
-  --local lungs = wm.Delineation.body or wm.Delineation.Body or wm.Delineation.Both_Lungs or wm.Delineation.Lungs or wm.Delineation.Both_Lung
+  --local lungs = wm.Delineation.body or wm.Delineation.Body or wm.Delineation.Both_Lu5ngs or wm.Delineation.Lungs or wm.Delineation.Both_Lung
   if not lungs then
     error("No lung delineation found")
   end
