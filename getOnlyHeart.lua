@@ -56,28 +56,28 @@ end
 --Get list of scans with heart delin
 --log = io.open(basefolder .. outFolder .. [[log.txt]], 'a');--log file used for error handling and debugging
 volFile = io.open(basefolder .. outFolder .. [[heartVols.csv]], 'w');
-volFile:write( "ID,mVol" );
+volFile:write( "ID,mVol \n" );
 
 local fxdrNames = scandir(basefolder .. origxdrFolder);
-local fHeartNames = scardir(basefolder .. dataFileName);
-local fNames = [];
+local fHeartNames = scandir(basefolder .. dataFileName);
+local fNames = {};
 
 for i=1,#fHeartNames do
-  fHeartNames[i]:gsub(".pack", ".xdr");
+  fHeartNames[i]=fHeartNames[i]:gsub(".pack", ".xdr");
   if contains(fxdrNames,fHeartNames[i]) then
-    table.insert( fNames, fHeartNames[i]:gsub(".xdr",".pack") );
+    table.insert( fNames, { id = i, pack = fHeartNames[i]:gsub(".xdr",".pack") } );
   end
 end
 collectgarbage()
 
 for i=1,#fNames do
-  currentpatientpack = fNames[i];
+  currentpatientpack = fNames[i].pack;
 --load xdr and heart delin
-  loadpack( basefolder .. dataFileNames .. currentpatientpack );
+  loadpack( basefolder .. dataFileName .. currentpatientpack );
   mAdjust = wm.Scan[1].Adjust;
   mTrans = wm.Scan[1].Transform;
   local origBubs = field:new();
-  AVS:READ_XDR( origBubs, basefolder .. outFolder .. origxdrFolder );
+  AVS:READ_XDR( origBubs, basefolder .. origxdrFolder .. currentpatientpack:gsub( ".pack", ".xdr" ) );
 
 --mask off heart
   local heartDelin = wm.Delineation.Heart or wm.Delineation.heart;
@@ -96,7 +96,7 @@ for i=1,#fNames do
   thisBub:setup();
   finalBubs:setup();
   local val = 1;
-  local vols = [];
+  local vols = {};
   
   for i=1,nOfBubs do
     AVS:FIELD_THRESHOLD( masked.Data, thisBub.Data, i, i, val )--take one volume and give it unique pixel value
@@ -111,7 +111,12 @@ for i=1,#fNames do
   end
 
 --output mVols
-  local mVol = median( vols );
+  local mVol = 0;
+  if #vols>1 then
+    mVol = median( vols );
+  elseif #vols==1 then
+    mVol = vols[1];
+  end
   volFile:write( currentpatientpack:gsub( ".pack", "" ) .. "," .. mVol .. " \n" );
   volFile:flush();
   
