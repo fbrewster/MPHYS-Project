@@ -10,7 +10,7 @@ dataFileName = [[PackWithHearts\]]
 outFolder = [[Calcifications\]]
 xdrFolder = outFolder .. [[heartMasks2\]]--string.gsub(dataFileName, [[\]], [[Xdr\]])
 clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
-maxVol = 3--largest volumes considered a calcification
+maxVol = 5--largest volumes considered a calcification
 bleedVol = 10--volume above which a fill is considred to have bled
 maxVolTot = 0--to keep track of how big the bleed volumes are
 floodVol = 0--used to check for new flooded volumes
@@ -185,6 +185,7 @@ function hasBled2(inScan)--make a flood hasn't bled
 end
 
 function intersect(s1,s2)
+  s2.Data:tobyte()
   local vol1=s1:volume().value
   --AVS:FIELD_DIVC(s2.Data,s2.Data,255)
   local s1s2 = Scan:new()
@@ -216,6 +217,19 @@ function getCal()--find calcifications and write them out to a xdr file
   local cHull = Scan:new()
   cHull:setup()
   lungCH,cHull = lungConvexHull()
+  
+  local f = Field:new()
+  local cHullBig = Scan:new()
+  cHullBig:setup()
+  AVS:FIELD_TO_FLOAT(cHull.Data, cHull.Data)
+  AVS:FIELD_OPS(cHull.Data, f, 1, AVS.FIELD_OPS_SignedDist, false, 
+    (math.floor(math.abs(cHull.Data:pixelsize(0).value)*1000 + 0.5)), 
+    3*(math.floor(math.abs(cHull.Data:pixelsize(1).value)*1000 + 0.5)), 
+    (math.floor(math.abs(cHull.Data:pixelsize(2).value)*1000 + 0.5)))
+  AVS:FIELD_DIVC(f, f, 1000)
+  AVS:FIELD_THRESHOLD(f,cHullBig.Data, -1000,1)
+  f:clear()
+  AVS:FIELD_OPS(cHullBig.Data,cHull.Data,1,AVS.FIELD_OPS_Closing)
   
   --spine burn
   --[[
@@ -269,7 +283,7 @@ function getCal()--find calcifications and write them out to a xdr file
 
   local masked = Scan:new()
   masked:setup()
-  masked = mask(orign,cHull,-0.1)--mask image by shrunk ch
+  masked = mask(orign,cHull,0.1)--mask image by shrunk ch
   local hist = masked:histogram(masked,650,3000,3000,256)--get histogram of masked scan
   hist.cumulative = true
   local lowThresh = hist:percentile(99.7).value--find 99th percentile pixel value
@@ -300,7 +314,7 @@ function getCal()--find calcifications and write them out to a xdr file
   --Mask with CH and put in scan 6. Shrink by 1cm
   local maskSmooth = Scan:new()
   maskSmooth:setup()
-  maskSmooth = mask(smoothed,cHull,-0.1)--mask scan by shrunk ch
+  maskSmooth = mask(smoothed,cHull,0.1)--mask scan by shrunk ch
   scans[4] = maskSmooth
 
 
@@ -311,7 +325,7 @@ function getCal()--find calcifications and write them out to a xdr file
   local shcHull = cHull:copy()
   AVS:FIELD_OPS(shcHull.Data, shcHull.Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
   tempScan = shcHull.Data:copy()
-  AVS:FIELD_THRESHOLD(tempScan, shcHull.Data, 117)--shrink it
+  AVS:FIELD_THRESHOLD(tempScan, shcHull.Data, 255)--shrink it
   scans[1] = shcHull
   cents,bubTot,bubs = bubbleCent(maskSmooth,shcHull:copy())--find bubbles and centres
   scans[5] = bubTot
@@ -339,12 +353,12 @@ function getCal()--find calcifications and write them out to a xdr file
     local bleed = hasBled2(flood)--check for bleed
     if bleed then--if it has bled, try again
       flood = safe:copy()
-      floodThresh = bubHist:percentile(90).value--try with 83rd pixel value
+      --[[floodThresh = bubHist:percentile(90).value--try with 83rd pixel value
       AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)--try flooding again
       local bleed2 = hasBled2(flood)--check for bleed
       if bleed2 then--if it has bled again
         flood = safe:copy()--exclude it
-      end
+      end]]
     end
     collectgarbage()
   end
@@ -358,10 +372,10 @@ function getCal()--find calcifications and write them out to a xdr file
   AVS:FIELD_OPS(totBubFlood.Data, totBubFlood.Data, 2, AVS.FIELD_OPS_Closing)
   AVS:FIELD_OPS(totBubFlood.Data, totBubFlood.Data, 1, AVS.FIELD_OPS_Smooth3)--smooth
   tempScan = totBubFlood.Data:copy()
-  AVS:FIELD_THRESHOLD(tempScan, totBubFlood.Data, 1, 255)--flatten
-  if delin then --if there's a spine delin, add it
+  AVS:FIELD_THRESHOLD(tempScan, totBubFlood.Data, 1, 255 )--flatten
+  --[[if delin then --if there's a spine delin, add it
     totBubFlood.Data:add(spineBig.Data)
-  end
+  end]]
   AVS:FIELD_TO_INT( totBubFlood.Data, bubFlood.Data )
   AVS:FIELD_LABEL( bubFlood.Data, bubFlood.Data, null, AVS.FIELD_LABEL_3D, 1)--find volumes and label
   local thisBub = Scan:new()
@@ -374,11 +388,11 @@ function getCal()--find calcifications and write them out to a xdr file
   for i=1,#cents do
     AVS:FIELD_THRESHOLD(bubFlood.Data, thisBub.Data, i, i, val)--take one volume and give it unique pixel value
     if thisBub.Data:max().value>0 and thisBub:volume().value<maxVol and thisBub:volume().value>0.01 then--if the bubble exists and isn't too large
-      local cross=intersect(thisBub:copy(),cHull:copy())
-      if not cross then
+      --local cross=intersect(thisBub:copy(),cHull:copy())
+      --if not cross then
         finalBubs:add(thisBub)--add it to the final bubbles
         val = val + 1--move to next pixel value id
-      end
+      --end
     end
     thisBub.Data:clear()
     collectgarbage()
