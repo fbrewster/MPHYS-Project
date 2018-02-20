@@ -6,9 +6,9 @@ Finds calcifications and and outputs a mask of these as well as total calcificat
 
 
 basefolder = [[D:\MPHYS\Data\]]
-dataFileName = [[SamplePacks\]]
+dataFileName = [[4dSample\]]
 outFolder = [[Calcifications\]]
-xdrFolder = outFolder .. [[sampleHeartMasks\]]--string.gsub(dataFileName, [[\]], [[Xdr\]])
+xdrFolder = outFolder .. [[sample4DMasks\]]--string.gsub(dataFileName, [[\]], [[Xdr\]])
 clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
 maxVol = 3--largest volumes considered a calcification
 bleedVol = 10--volume above which a fill is considred to have bled
@@ -205,7 +205,7 @@ end
 
 
 
-function getCal()--find calcifications and write them out to a xdr file
+function getCal(scanNum)--find calcifications and write them out to a xdr file
   local scans = {}
 
   --set master adjust and transform.
@@ -213,7 +213,7 @@ function getCal()--find calcifications and write them out to a xdr file
   mTrans = wm.Scan[1].Transform
 
   local orign = Scan:new()
-  orign = wm.Scan[1]:copy()
+  orign = wm.Scan[scanNum]:copy()
 
   --Make convex hull
   local lungCH = Delineation:new()
@@ -404,7 +404,7 @@ function getCal()--find calcifications and write them out to a xdr file
     collectgarbage()
   end
   
-  local xdrName = currentpatientpack:gsub(".pack", ".xdr")--change pack name to xdr name
+  local xdrName = scanNum .. "_" .. currentpatientpack:gsub(".pack", ".xdr")--change pack name to xdr name
   
   if finalBubs.Data:max().value==0 then
     finalBubs = orign:copy()
@@ -446,25 +446,28 @@ for fileNum=1,#fNames do--go through all the files in the list
   if not fileexists(basefolder .. xdrFolder .. currentpatientpack:gsub(".pack", ".xdr")) and not isBadPack() then
     log:write(currentpatientpack .. "\n")--put file name in log
     loadpack(basefolder .. dataFileName .. currentpatientpack)
-    local status,er = xpcall(getCal, debug.traceback)--try finding calcifications. If there's an error, catch it and do a traceback
-    if not status then-- if there has been an error
-      log:write( "Failed: " .. er .. "\n")--put error message and traceback in log
+    for scanNum=3,12 do
+      log:write("Phase: " .. scanNum);
+      local status,er = xpcall(getCal, debug.traceback, scanNum)--try finding calcifications. If there's an error, catch it and do a traceback
+      if not status then-- if there has been an error
+        log:write( "Failed: " .. er .. "\n")--put error message and traceback in log
+      end
+      --[[status, er = xpcall(writeInfo, debug.traceback)
+      if not status then-- if there has been an error
+        log:write( "Failed: " .. er .. "\n")--put error message and traceback in log
+      end]]
+      if not writeTemp.vol then
+        writeTemp.vol=[[error]]
+      end
+      if not writeTemp.thr then
+        writeTemp.thr=[[error]]
+      end
+      volFile:write(currentpatientpack .. "," .. scanNum .. "," .. writeTemp.vol .. "," .. writeTemp.thr .. " \n")
+      volFile:flush()
+      log:write(os.date("Finished at %c \n"))
+      log:write("---------------------------- \n")
+      log:flush()
     end
-    --[[status, er = xpcall(writeInfo, debug.traceback)
-    if not status then-- if there has been an error
-      log:write( "Failed: " .. er .. "\n")--put error message and traceback in log
-    end]]
-    if not writeTemp.vol then
-      writeTemp.vol=[[error]]
-    end
-    if not writeTemp.thr then
-      writeTemp.thr=[[error]]
-    end
-    volFile:write(currentpatientpack .. "," .. writeTemp.vol .. "," .. writeTemp.thr .. " \n")
-    volFile:flush()
-    log:write(os.date("Finished at %c \n"))
-    log:write("---------------------------- \n")
-    log:flush()
   end
   writeTemp.vol=nil
   writeTemp.thr=nil
