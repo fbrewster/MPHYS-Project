@@ -6,9 +6,9 @@ Finds calcifications and and outputs a mask of these as well as total calcificat
 
 
 basefolder = [[D:\MPHYS\Data\]]
-dataFileName = [[SamplePacks\]]
+dataFileName = [[4dSample\]]
 outFolder = [[Calcifications\]]
-xdrFolder = outFolder .. [[masks\]]--string.gsub(dataFileName, [[\]], [[Xdr\]])
+xdrFolder = outFolder .. [[sample4DMasks\]]--string.gsub(dataFileName, [[\]], [[Xdr\]])
 clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
 maxVol = 3--largest volumes considered a calcification
 bleedVol = 10--volume above which a fill is considred to have bled
@@ -34,10 +34,21 @@ function TScan:setup()--sets adjust and transform
   self.Transform = mTrans
 end
 
+local function TScan:objectness(sigMin, sigMax, nScales, m)
+  local popen = io.popen
+  self:write_nifty([[C:\temp\temp.nii]]);
+  popen('cd c:\temp')
+  popen('vesselness temp.nii vesselness.nii scales.nii ' .. sigMin .. ' ' .. sigMax .. ' ' .. nScales .. ' ' .. m)
+  local inScan = Scan:new()
+  inScan:setup()
+  inScan:read_nifty([[C:\temp\temp.nii]])
+  return inScan
+end
 
-function lungConvexHull()--Makes a convex hull from the delineation of both lungs
+
+local function lungConvexHull()--Makes a convex hull from the delineation of both lungs
   
-  local lungs = wm.Delineation.Both_Lungs or wm.Delineation.Lungs or wm.Delineation.Both_Lung or wm.Delineation.LUNGS or wm.Delineation.both_lungs or wm.Delineation['Lungs-CTV'] --get lung delineation
+  local lungs = wm.Delineation.Both_Lungs or wm.Delineation.Lungs or wm.Delineation.Both_Lung or wm.Delineation.LUNGS or wm.Delineation.both_lungs or wm.Delineation['Lungs-CTV'] or wm.Delineation.Partial_Lungs --get lung delineation
   --local lungs = wm.Delineation.body or wm.Delineation.Body or wm.Delineation.Both_Lu5ngs or wm.Delineation.Lungs or wm.Delineation.Both_Lung
   if not lungs then
     error("No lung delineation found")
@@ -55,6 +66,7 @@ function lungConvexHull()--Makes a convex hull from the delineation of both lung
   AVS:TRANSFORM_MATH( trans, nil, trans, true )--inverts trans
   AVS:DOTXFM( delChPts, trans, delChPts )--applied inverted trans to get back
   --AVS:VRML_WRITE( delChPts, delChIndex, nil, [[c:\temp\lungsConvexHull_contoursScan.wrl]] )--writes 3d model of ch to file
+
   
   --clean and fix contours
   results = String:new()
@@ -64,6 +76,8 @@ function lungConvexHull()--Makes a convex hull from the delineation of both lung
   local newDel = lungs:copy()
   newDel.Dots = delChPts
   newDel.Index = delChIndex
+  
+  collectgarbage()
   
   local cHull = Scan:new()
   cHull:setup()
@@ -75,7 +89,7 @@ function lungConvexHull()--Makes a convex hull from the delineation of both lung
 end
 
 
-function mask(input, cHull, lShrink)--masks scan[input] with scan[cHull], shrunk by "shrink" and outputs to scan[output]
+local function mask(input, cHull, lShrink)--masks scan[input] with scan[cHull], shrunk by "shrink" and outputs to scan[output]
   local ch = cHull:copy()--to avoid editing of original ch
   lShrink = (lShrink*100)+127--convert to threshold value
   --Exclude data outside of CH
@@ -93,7 +107,7 @@ end
 
 
 
-function chDist(bubble, cDist, chIn)--Checks if a bubble is too close (<cDist) to the convex hull (chIn)
+local function chDist(bubble, cDist, chIn)--Checks if a bubble is too close (<cDist) to the convex hull (chIn)
   local chTemp = chIn:copy()--avoid editing the original ch
   
   AVS:FIELD_OPS(chTemp.Data, chTemp.Data, AVS.FIELD_OPS_SignedDist)--turn ch into a distance measure
@@ -114,7 +128,7 @@ function chDist(bubble, cDist, chIn)--Checks if a bubble is too close (<cDist) t
   return clip
 end
 
-function bubbleCent (inSc,cHull)--finds the connected pixels and their centres
+local function bubbleCent (inSc,cHull)--finds the connected pixels and their centres
   
   local dummy = field:new()
   local labels = Scan:new()
@@ -172,7 +186,7 @@ function bubbleCent (inSc,cHull)--finds the connected pixels and their centres
 end
 
 
-function hasBled2(inScan)--make a flood hasn't bled
+local function hasBled2(inScan)--make a flood hasn't bled
   local vol = inScan:volume(5000,5000).value--take all flooded volume
   local bled = false
   local newVol = vol-lastFloodVol--amount volume had changed by = recently flooded volume 
@@ -184,7 +198,7 @@ function hasBled2(inScan)--make a flood hasn't bled
   return bled
 end
 
-function intersect(s1,s2)
+local function intersect(s1,s2)
   local vol1=s1:volume().value
   --AVS:FIELD_DIVC(s2.Data,s2.Data,255)
   local s1s2 = Scan:new()
@@ -201,7 +215,7 @@ end
 
 
 
-function getCal(scanNum)--find calcifications and write them out to a xdr file
+local function getCal()--find calcifications and write them out to a xdr file
   local scans = {}
 
   --set master adjust and transform.
@@ -210,6 +224,8 @@ function getCal(scanNum)--find calcifications and write them out to a xdr file
 
   local orign = Scan:new()
   orign = wm.Scan[scanNum]:copy()
+  
+  
 
   --Make convex hull
   local lungCH = Delineation:new()
@@ -327,7 +343,7 @@ function getCal(scanNum)--find calcifications and write them out to a xdr file
     local bubHist = bubMask:histogram(bubMask,650,3000,3000,256)--get histogram of window
     bubHist.cumulative = true
     local floodThresh = bubHist:percentile(85).value--find 80th percentile pixel value
-    if floodThresh<1100 then--if the flood value is too low set it to min cal CT number
+    if floodThresh<1135 then--if the flood value is too low set it to min cal CT number
       floodThresh = 1135 
     end
     allMask:add(bubMask)--add window to total window scan
@@ -401,7 +417,7 @@ function getCal(scanNum)--find calcifications and write them out to a xdr file
 end
 
 
-function isBadPack()
+local function isBadPack()
   local badPacks = {[[200202207.pack]],[[200100707.pack]],[[200902992.pack]],[[201005615.pack]],[[201100506.pack]],[[201008951.pack]],[[201102020.pack]],[[201103529.pack]],[[201111325.pack]],[[201112180.pack]],[[201204780.pack]],[[201214392.pack]]}
   for index, pack in ipairs(badPacks) do
     if pack==currentpatientpack then
@@ -417,35 +433,38 @@ log = io.open(basefolder .. outFolder .. [[log.txt]], 'a')--log file used for er
 volFile = io.open(basefolder .. outFolder .. [[vols.csv]], 'a')
 
 local fNames = scandir(basefolder .. dataFileName)
+scanNum = 3
 
 for fileNum=1,#fNames do--go through all the files in the list
-  print(fileNum)--print the file number
   currentpatientpack = fNames[fileNum]--find the pack name
 
-  if not fileexists(basefolder .. xdrFolder .. currentpatientpack:gsub(".pack", ".xdr")) and not isBadPack() then
+  if not fileexists(basefolder .. xdrFolder .. "12_" .. currentpatientpack:gsub(".pack", ".xdr")) and not isBadPack() then
     log:write(currentpatientpack .. "\n")--put file name in log
     loadpack(basefolder .. dataFileName .. currentpatientpack)
-    for scanNum=3,12 do
-    log:write("Phase: " .. scanNum);
-    local status,er = xpcall(getCal, debug.traceback, scanNum)--try finding calcifications. If there's an error, catch it and do a traceback
-    if not status then-- if there has been an error
-      log:write( "Failed: " .. er .. "\n")--put error message and traceback in log
+    for i=1,10 do
+      print(fileNum .. ":" .. i)--print the file number
+      scanNum = i+2
+      log:write("Phase: " .. i .. "\n");
+      local status,er = xpcall(getCal, debug.traceback)--try finding calcifications. If there's an error, catch it and do a traceback
+      if not status then-- if there has been an error
+        log:write( "Failed: " .. er .. "\n")--put error message and traceback in log
+      end
+      --[[status, er = xpcall(writeInfo, debug.traceback)
+      if not status then-- if there has been an error
+        log:write( "Failed: " .. er .. "\n")--put error message and traceback in log
+      end]]
+      if not writeTemp.vol then
+        writeTemp.vol=[[error]]
+      end
+      if not writeTemp.thr then
+        writeTemp.thr=[[error]]
+      end
+      volFile:write(currentpatientpack .. "," .. i .. "," .. writeTemp.vol .. "," .. writeTemp.thr .. " \n")
+      volFile:flush()
+      log:write(os.date("Finished at %c \n"))
+      log:write("---------------------------- \n")
+      log:flush()
     end
-    --[[status, er = xpcall(writeInfo, debug.traceback)
-    if not status then-- if there has been an error
-      log:write( "Failed: " .. er .. "\n")--put error message and traceback in log
-    end]]
-    if not writeTemp.vol then
-      writeTemp.vol=[[error]]
-    end
-    if not writeTemp.thr then
-      writeTemp.thr=[[error]]
-    end
-    volFile:write(currentpatientpack .. "," .. scanNum .. "," .. writeTemp.vol .. "," .. writeTemp.thr .. " \n")
-    volFile:flush()
-    log:write(os.date("Finished at %c \n"))
-    log:write("---------------------------- \n")
-    log:flush()
   end
   writeTemp.vol=nil
   writeTemp.thr=nil

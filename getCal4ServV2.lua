@@ -8,7 +8,7 @@ Finds calcifications and and outputs a mask of these as well as total calcificat
 basefolder = [[D:\MPHYS\Data\]]
 dataFileName = [[SamplePacks\]]
 outFolder = [[Calcifications\]]
-xdrFolder = outFolder .. [[masks\]]--string.gsub(dataFileName, [[\]], [[Xdr\]])
+xdrFolder = outFolder .. [[sampleShapeMasks\]]--string.gsub(dataFileName, [[\]], [[Xdr\]])
 clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
 maxVol = 3--largest volumes considered a calcification
 bleedVol = 10--volume above which a fill is considred to have bled
@@ -16,6 +16,7 @@ maxVolTot = 0--to keep track of how big the bleed volumes are
 floodVol = 0--used to check for new flooded volumes
 lastFloodVol = 0--""
 writeTemp = {}
+enhancementFactor = 0.5
 
 
 
@@ -30,12 +31,12 @@ end
 
 
 function TScan:setup()--sets adjust and transform
-  self.adjust = mAdjust
-  self.Transform = mTrans
+  self.adjust = mAdjust:copy()
+  self.Transform = mTrans:copy()
 end
 
 
-function lungConvexHull()--Makes a convex hull from the delineation of both lungs
+function lungConvexHull(orign)--Makes a convex hull from the delineation of both lungs
   
   local lungs = wm.Delineation.Both_Lungs or wm.Delineation.Lungs or wm.Delineation.Both_Lung or wm.Delineation.LUNGS or wm.Delineation.both_lungs or wm.Delineation['Lungs-CTV'] --get lung delineation
   --local lungs = wm.Delineation.body or wm.Delineation.Body or wm.Delineation.Both_Lu5ngs or wm.Delineation.Lungs or wm.Delineation.Both_Lung
@@ -45,13 +46,13 @@ function lungConvexHull()--Makes a convex hull from the delineation of both lung
   
   local chIndex = Field:new()--create index for CH
   AVS:CONVEX_HULL( lungs.Dots, chIndex )--make CH index from lung delin5
-  chDots = lungs.Dots--dots are the same as lung
+  local chDots = lungs.Dots--dots are the same as lung
   
-  local trans = mTrans--take scan transform
+  local trans = mTrans:copy()--take scan transform
   AVS:DOTXFM( chDots, trans, chDots )--change chDots to scan transform
   local delChPts = Field:new()
   local delChIndex = Field:new()
-  AVS:TT_TO_CNT( chDots, chIndex, wm.Scan[1].Data, delChPts, delChIndex )--makes delin from dots and index
+  AVS:TT_TO_CNT( chDots, chIndex, wm.scan[1].Data, delChPts, delChIndex )--makes delin from dots and index
   AVS:TRANSFORM_MATH( trans, nil, trans, true )--inverts trans
   AVS:DOTXFM( delChPts, trans, delChPts )--applied inverted trans to get back
   --AVS:VRML_WRITE( delChPts, delChIndex, nil, [[c:\temp\lungsConvexHull_contoursScan.wrl]] )--writes 3d model of ch to file
@@ -85,6 +86,10 @@ function mask(input, cHull, lShrink)--masks scan[input] with scan[cHull], shrunk
   AVS:FIELD_OPS(ch.Data, ch.Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
   local temp = ch:copy()--threshold can't have same input and output
   AVS:FIELD_THRESHOLD(temp.Data, ch.Data, lShrink)--delete everything shrink cm in
+  if input.Transform~=ch.Transform then
+    ch.Transform:set(input.Transform)
+    output=input:copy()
+  end
   AVS:FIELD_MASK(input.Data, ch.Data, output.Data)--delete outside of new shrunk mask
   ch.Description = [[Convex hull shrunk by <shrink>]]
   output.Description = "Masked and thresholded data"
@@ -199,23 +204,58 @@ function intersect(s1,s2)
 end
 
 
-
+function TScan:objectness(sigMin,sigMax,nOfSigs,M)
+  self:write_nifty([[C:\temp\temp.nii]],true)
+  os.execute (basefolder .. outFolder .. [[objectnessGeneral2 c:\temp\temp.nii c:\temp\vesselness.nii c:\temp\scales.nii ]] .. sigMin .. " " .. sigMax .. " " .. nOfSigs .. " " .. M)
+  local inScan = Scan:new()
+  inScan:setup()
+  inScan:read_nifty([[C:\temp\vesselness.nii]])
+  --[[local trans = inScan.Transform
+  AVS:TRANSFORM_INVERT(trans,trans)
+  local output = inScan:copy()
+  local dummy = field:new()
+  AVS:FIELDXFM(inScan.data,trans,inScan.data,output.data)
+  output.Transform=mTrans]]
+  return inScan
+end
 
 function getCal()--find calcifications and write them out to a xdr file
   local scans = {}
 
   --set master adjust and transform.
-  mAdjust = wm.Scan[1].Adjust
-  mTrans = wm.Scan[1].Transform
+  mAdjust = wm.Scan[1].Adjust:copy()
+  mTrans = wm.Scan[1].Transform:copy()
 
   local orign = Scan:new()
   orign = wm.Scan[1]:copy()
-
+  
+  local plateness = orign:objectness(2,2.5,2,2)
+  --local blobness = orign:objectness(1.5,2,2,0)
+  --vess.data:toshort(
+  AVS:FIELD_OPS(plateness.Data, plateness.Data, 1, AVS.FIELD_OPS_Smooth3)
+  local origF = orign:copy()
+  origF.data:tofloat()
+  local mult = field:new()
+  local toMult = field:new()
+  AVS:FIELD_MULC(plateness.data,toMult,enhancementFactor)
+  --AVS:FIELD_MULC(blobness.data,blobness.data,0.2)
+  --AVS:FIELD_THRESHOLD(vess.Data, toMult, 0, 1, 1, 0)
+  --AVS:FIELD_ADD(toMult,blobness.data,toMult)
+  toMult:tofloat()
+  --AVS:FIELD_ADDC(toMult,toMult,0.5)
+  AVS:FIELD_MUL(toMult,origF.data,mult)
+  local enhanced = plateness:copy()
+  mult:toshort()
+  enhanced.data=mult
+  orign=enhanced:copy()
+  
+  
   --Make convex hull
   local lungCH = Delineation:new()
   local cHull = Scan:new()
   cHull:setup()
-  lungCH,cHull = lungConvexHull()
+  lungCH,cHull = lungConvexHull(orign)
+  
   
   --spine burn
   local spine = Scan:new()
@@ -228,7 +268,7 @@ function getCal()--find calcifications and write them out to a xdr file
   spineBigLR:setup()
   local delin = wm.Delineation.SC or wm.Delineation.cord or wm.Delineation.SCanal or wm.Delineation.SCANAL or wm.Delineation.SCord or wm.Delineation.sc or wm.Delineation.s_canal or wm.Delineation.S_CANAL or wm.Delineation.S_Canal or wm.Delineation.Spinal_Canal or wm.Delineation.Cord3 or wm.Delineation.spinal_canal or wm.Delineation.scanal--find spine delineation
   if delin then--if there is a spine delin with one of these names
-    spine = orign:burn(delin, 255)--burn the delin
+    spine = wm.Scan[1]:burn(delin, 255)--burn the delin
     --AVS:FIELD_OPS(spine.Data, spine.Data, 15, AVS.FIELD_OPS_Smooth3)--smooth out the burn
     --AVS:FIELD_THRESHOLD(spine.Data, spineBig.Data,1)--flatten the smoothing
     --AVS:FILTER_WITH_KERNEL(spine.Data,kern,spine.Data)
@@ -262,7 +302,7 @@ function getCal()--find calcifications and write them out to a xdr file
   spineInvert:setup()
   AVS:FIELD_THRESHOLD(spineBig.Data,spineInvert.Data,255,255,0,255)
   --spineInvert.Data:tobyte()
-  cHull.Data:tobyte()
+  --cHull.Data:tobyte()
   AVS:FIELD_AND(cHull.Data,spineInvert.Data,cHull.Data)
 
 
@@ -271,15 +311,18 @@ function getCal()--find calcifications and write them out to a xdr file
   masked = mask(orign,cHull,0.7)--mask image by shrunk ch
   local hist = masked:histogram(masked,650,3000,3000,256)--get histogram of masked scan
   hist.cumulative = true
-  local lowThresh = hist:percentile(99.7).value--find 99th percentile pixel value
+  local lowThresh = hist:percentile(99).value--find 99th percentile pixel value
   if lowThresh<1250 then
-    lowThresh=hist:percentile(99.9).value
+    lowThresh=hist:percentile(99.5).value
     if lowThresh<1135 then
       lowThresh=1135
     end
   end
   local highThresh = hist:max()--find largest pixel value
   hist:clear()
+  
+  mTrans=orign.Transform
+  mAdjust=orign.Adjust
 
   --threshold into scan 4
   local threshed = Scan:new()
@@ -319,7 +362,7 @@ function getCal()--find calcifications and write them out to a xdr file
   allMask:setup()
 
   for i=1,#cents do--floodfill from centre of each bubble
-    local currentBub = bubs[i]:copy()
+    --[[local currentBub = bubs[i]:copy()
     local bubMask = Scan:new()
     bubMask:setup()
     AVS:FIELD_OPS(currentBub.Data, currentBub.Data, 4, AVS.FIELD_OPS_Smooth3)--smooth out mask
@@ -327,23 +370,24 @@ function getCal()--find calcifications and write them out to a xdr file
     local bubHist = bubMask:histogram(bubMask,650,3000,3000,256)--get histogram of window
     bubHist.cumulative = true
     local floodThresh = bubHist:percentile(85).value--find 80th percentile pixel value
-    if floodThresh<1100 then--if the flood value is too low set it to min cal CT number
-      floodThresh = 1135 
+    if floodThresh<1100*0.75 then--if the flood value is too low set it to min cal CT number
+      floodThresh = 1135*0.75 
     end
-    allMask:add(bubMask)--add window to total window scan
+    allMask:add(bubMask)--add window to total window scan]]
     
+    local floodThresh=1135
     local safe = flood:copy()
     AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)--floodfill from centre of bubble out to 80th percentile pixel value
     
     local bleed = hasBled2(flood)--check for bleed
     if bleed then--if it has bled, try again
       flood = safe:copy()
-      floodThresh = bubHist:percentile(90).value--try with 83rd pixel value
+      --[[floodThresh = bubHist:percentile(90).value--try with 83rd pixel value
       AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)--try flooding again
       local bleed2 = hasBled2(flood)--check for bleed
       if bleed2 then--if it has bled again
         flood = safe:copy()--exclude it
-      end
+      end]]
     end
     collectgarbage()
   end
