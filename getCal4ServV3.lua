@@ -236,25 +236,34 @@ function getCal()--find calcifications and write them out to a xdr file
   local clip = Scan:new()
   clip:setup()
   
-  AVS:FIELD_CLIP(orign.data, clip.Data, 1120, 1650) 
+  AVS:FIELD_CLIP(orign.data, clip.Data, 1120, 1650)
   
-  local plateness = clip:objectness(3,3,1,1)
-  --local blobness = orign:objectness(1.5,2,2,0)
-  --vess.data:toshort(
-  AVS:FIELD_OPS(plateness.Data, plateness.Data, 2, AVS.FIELD_OPS_Smooth)
+  local blobEnh = clip:objectness(0.5,0.5,0,0)
+  AVS:FIELD_OPS(blobEnh.Data, blobEnh.Data, 2, AVS.FIELD_OPS_Smooth)
+  
+  local vess = clip:objectness(3,3,1,1)
+  AVS:FIELD_OPS(vess.Data, vess.Data, 2, AVS.FIELD_OPS_Smooth)
+  
+  --local blobSubt = clip:objectness(4,4,1,1)
+  --AVS:FIELD_OPS(blobSubt.Data, blobSubt.Data, 2, AVS.FIELD_OPS_Smooth)
+  
   local origF = orign:copy()
   origF.data:tofloat()
+  
   local mult = field:new()
   local toMult = field:new()
-  AVS:FIELD_MULC(plateness.data,toMult,enhancementFactor)
-  --AVS:FIELD_MULC(blobness.data,blobness.data,0.2)
-  --AVS:FIELD_THRESHOLD(vess.Data, toMult, 0, 1, 1, 0)
-  --AVS:FIELD_ADD(toMult,blobness.data,toMult)
-  --toMult = plateness.data:copy()
-  toMult:tofloat()
-  AVS:FIELD_ADDC(toMult,toMult,0.5)
+  local toMultV = field:new()
+  local toMultBE = field:new()
+  AVS:FIELD_MULC(vess.data,toMultV,enhancementFactor)
+  AVS:FIELD_MULC(blobEnh.data,toMultBE,enhancementFactor)
+  toMultV:tofloat()
+  toMultBE:tofloat()
+  AVS:FIELD_ADDC(toMultV,toMultV,(1-enhancementFactor))
+  AVS:FIELD_ADDC(toMultBE,toMultBE,(1-enhancementFactor))
+  AVS:FIELD_ADD(toMultBE,toMultV,toMult)
+  
   AVS:FIELD_MUL(toMult,origF.data,mult)
-  local enhanced = plateness:copy()
+  local enhanced = vess:copy()
   mult:toshort()
   enhanced.data=mult
   orign=enhanced:copy()
