@@ -9,14 +9,14 @@ basefolder = [[D:\MPHYS\Data\]]
 dataFileName = [[SamplePacks\]]
 outFolder = [[Calcifications\]]
 xdrFolder = outFolder .. [[sampleShapeMasks\]]--string.gsub(dataFileName, [[\]], [[Xdr\]])
-clipDist = 0.3--acceptabel distance from the centre of a bubble to the CH boundary
-maxVol = 10--largest volumes considered a calcification
+clipDist = 0.3--acceptable distance from the centre of a bubble to the CH boundary
+maxVol = 5--largest volumes considered a calcification
 bleedVol = 10--volume above which a fill is considred to have bled
 maxVolTot = 0--to keep track of how big the bleed volumes are
 floodVol = 0--used to check for new flooded volumes
 lastFloodVol = 0--""
 writeTemp = {}
-enhancementFactor = 0.5
+enhancementFactor = 0.75
 
 
 
@@ -224,58 +224,62 @@ function TScan:objectness(sigMin,sigMax,nOfSigs,M)
 end
 
 function getCal()--find calcifications and write them out to a xdr file
-  local scans = {}
 
   --set master adjust and transform.
   mAdjust = wm.Scan[1].Adjust:copy()
   mTrans = wm.Scan[1].Transform:copy()
 
+  local orignEnhanced = Scan:new()
+  orignEnhanced = wm.Scan[1]:copy()
+  
   local orign = Scan:new()
   orign = wm.Scan[1]:copy()
   
   local clip = Scan:new()
   clip:setup()
   
-  AVS:FIELD_CLIP(orign.data, clip.Data, 1120, 1650)
+  AVS:FIELD_CLIP(orignEnhanced.data, clip.Data, 1120, 1650)
   
-  local blobEnh = clip:objectness(0.5,0.5,0,0)
-  AVS:FIELD_OPS(blobEnh.Data, blobEnh.Data, 2, AVS.FIELD_OPS_Smooth)
+  --local blobEnh = clip:objectness(0.3,0.3,1,0)
+  --AVS:FIELD_OPS(blobEnh.Data, blobEnh.Data, 2, AVS.FIELD_OPS_Smooth)
   
   local vess = clip:objectness(3,3,1,1)
-  AVS:FIELD_OPS(vess.Data, vess.Data, 2, AVS.FIELD_OPS_Smooth)
+  AVS:FIELD_OPS(vess.Data, vess.Data, 3, AVS.FIELD_OPS_Smooth)
   
   --local blobSubt = clip:objectness(4,4,1,1)
   --AVS:FIELD_OPS(blobSubt.Data, blobSubt.Data, 2, AVS.FIELD_OPS_Smooth)
   
-  local origF = orign:copy()
+  local origF = orignEnhanced:copy()
   origF.data:tofloat()
   
   local mult = field:new()
   local toMult = field:new()
-  local toMultV = field:new()
-  local toMultBE = field:new()
-  AVS:FIELD_MULC(vess.data,toMultV,enhancementFactor)
-  AVS:FIELD_MULC(blobEnh.data,toMultBE,enhancementFactor)
-  toMultV:tofloat()
-  toMultBE:tofloat()
-  AVS:FIELD_ADDC(toMultV,toMultV,(1-enhancementFactor))
-  AVS:FIELD_ADDC(toMultBE,toMultBE,(1-enhancementFactor))
-  AVS:FIELD_ADD(toMultBE,toMultV,toMult)
+  --local toMultV = field:new()
+  --local toMultBE = field:new()
+  AVS:FIELD_MULC(vess.data,toMult,enhancementFactor)
+  --AVS:FIELD_MULC(blobEnh.data,toMultBE,enhancementFactor)
+  toMult:tofloat()
+  --toMultBE:tofloat()
+  AVS:FIELD_ADDC(toMult,toMult,(1-enhancementFactor))
+  --AVS:FIELD_ADDC(toMultBE,toMultBE,(1-enhancementFactor))
+  --AVS:FIELD_ADD(toMultBE,toMultV,toMult)
   
   AVS:FIELD_MUL(toMult,origF.data,mult)
+  --AVS:FIELD_MUL(mult,toMultBE,mult)
   local enhanced = vess:copy()
   mult:toshort()
   enhanced.data=mult
-  orign=enhanced:copy()
+  orignEnhanced=enhanced:copy()
   
   
   --Make convex hull
   local lungCH = Delineation:new()
   local cHull = Scan:new()
   cHull:setup()
-  lungCH,cHull = lungConvexHull(orign)
+  lungCH,cHull = lungConvexHull(orignEnhanced)
   
-  
+
+
   --spine burn
   local spine = Scan:new()
   spine:setup()
@@ -303,18 +307,36 @@ function getCal()--find calcifications and write them out to a xdr file
     
     AVS:FIELD_TO_FLOAT(spine.Data, spine.Data)
     AVS:FIELD_OPS(spine.Data, f, 1, AVS.FIELD_OPS_SignedDist, false, 
-      4*(math.floor(math.abs(spine.Data:pixelsize(0).value)*1000 + 0.5)), 
+      3*(math.floor(math.abs(spine.Data:pixelsize(0).value)*1000 + 0.5)), 
       (math.floor(math.abs(spine.Data:pixelsize(1).value)*1000 + 0.5)), 
       (math.floor(math.abs(spine.Data:pixelsize(2).value)*1000 + 0.5)))
     AVS:FIELD_DIVC(f, f, 1000)
-    AVS:FIELD_THRESHOLD(f,spineBigLR.Data, -1000,3)
+    AVS:FIELD_THRESHOLD(f,spineBigLR.Data, -1000,4)
     f:clear()
+    
+    AVS:FIELD_SHIFT(spineBigLR.Data, -2)
     
     AVS:FIELD_OR(spineBigAP.Data,spineBigLR.Data,spineBig.Data)
   else
     error("No spine delineation found" .. "\n")--create prompt if no spine delin
   end
   collectgarbage()
+  
+  --[[local aortaMask = Scan:new()
+  aortaMask:setup()
+  AVS:FIELD_OPS(spineBig.Data, aortaMask.Data, 7, AVS.FIELD_OPS_Closing)
+  aortaMask.Data:distxfm()
+  local temp = field:new()
+  AVS:FIELD_THRESHOLD(aortaMask.Data, temp, -1000, 3.25, 255,0)
+  aortaMask.Data = temp:copy()
+  --local aorta = wm.Scan[1]:copy()
+  local aortaPlate = Scan:new()
+  aortaPlate:setup()
+  --AVS:FIELD_MASK(aorta.Data,aortaMask.Data,aorta.Data)
+  
+  local plate = orign:objectness(2,2,1,2)
+  AVS:FIELD_MASK(plate.Data,aortaMask.Data,aortaPlate.Data)]]
+  
   
   --Cut spine out of cHull
   local spineInvert = Scan:new()
@@ -330,7 +352,7 @@ function getCal()--find calcifications and write them out to a xdr file
   masked = mask(orign,cHull,0.7)--mask image by shrunk ch
   local hist = masked:histogram(masked,650,3000,3000,256)--get histogram of masked scan
   hist.cumulative = true
-  local lowThresh = hist:percentile(90).value--find 99th percentile pixel value
+  local lowThresh = hist:percentile(99.75).value*0.8--find 99th percentile pixel value
   --[[if lowThresh<1250 then
     lowThresh=hist:percentile(99.5).value
     if lowThresh<1135 then
@@ -338,16 +360,14 @@ function getCal()--find calcifications and write them out to a xdr file
     end
   end]]
   local highThresh = 1650--find largest pixel value
-  hist:clear()
   
-  mTrans=orign.Transform
-  mAdjust=orign.Adjust
+  mTrans=orignEnhanced.Transform
+  mAdjust=orignEnhanced.Adjust
 
   --threshold into scan 4
   local threshed = Scan:new()
   threshed:setup()
-  AVS:FIELD_THRESHOLD( orign.Data, threshed.Data, lowThresh, highThresh )--threshold between 99th percentile and max
-  scans[2] = threshed
+  AVS:FIELD_THRESHOLD( orignEnhanced.Data, threshed.Data, lowThresh, highThresh )--threshold between 99th percentile and max
 
   --Smooth and put in scan 5
   local smoothed = Scan:new()
@@ -362,7 +382,6 @@ function getCal()--find calcifications and write them out to a xdr file
   local maskSmooth = Scan:new()
   maskSmooth:setup()
   maskSmooth = mask(smoothed,cHull,0.7)--mask scan by shrunk ch
-  scans[4] = maskSmooth
 
 
   local cents = field:new()
@@ -373,12 +392,11 @@ function getCal()--find calcifications and write them out to a xdr file
   AVS:FIELD_OPS(shcHull.Data, shcHull.Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
   tempScan = shcHull.Data:copy()
   AVS:FIELD_THRESHOLD(tempScan, shcHull.Data, 197)--shrink it
-  scans[1] = shcHull
   cents,bubTot,bubs = bubbleCent(maskSmooth,shcHull:copy())--find bubbles and centres
-  scans[5] = bubTot
-  local flood = orign:copy()
-  local allMask = Scan:new()
-  allMask:setup()
+  collectgarbage()
+  local flood = orignEnhanced:copy()
+  --local allMask = Scan:new()
+  --allMask:setup()
 
   for i=1,#cents do--floodfill from centre of each bubble
     local currentBub = bubs[i]:copy()
@@ -388,20 +406,20 @@ function getCal()--find calcifications and write them out to a xdr file
     AVS:FIELD_MASK(orign.Data, currentBub.Data, bubMask.Data)--create window of original scan about bubble
     local bubHist = bubMask:histogram(bubMask,650,3000,3000,256)--get histogram of window
     bubHist.cumulative = true
-    --local floodThresh = bubHist:percentile(85).value--find 80th percentile pixel value
+    local floodThresh = bubHist:percentile(80).value*0.75--find 80th percentile pixel value]]
     --[[if floodThresh<1100*enh then--if the flood value is too low set it to min cal CT number
       floodThresh = 1135*0.75 
     end]]
-    allMask:add(bubMask)--add window to total window scan
+    --allMask:add(bubMask)--add window to total window scan
     
-    local floodThresh=750
+    --local floodThresh=550
     local safe = flood:copy()
     AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)--floodfill from centre of bubble out to 80th percentile pixel value
     
     local bleed = hasBled2(flood)--check for bleed
     if bleed then--if it has bled, try again
       flood = safe:copy()
-      floodThresh = 1000--try with 83rd pixel value
+      floodThresh = floodThresh*(0.85/0.75)--try with 83rd pixel value
       AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)--try flooding again
       local bleed2 = hasBled2(flood)--check for bleed
       if bleed2 then--if it has bled again
@@ -449,8 +467,8 @@ function getCal()--find calcifications and write them out to a xdr file
   local xdrName = currentpatientpack:gsub(".pack", ".xdr")--change pack name to xdr name
   
   if finalBubs.Data:max().value==0 then
-    finalBubs = orign:copy()
-    AVS:FIELD_THRESHOLD(orign.Data, finalBubs.Data, 0, highThresh, 1, 0)
+    finalBubs = orignEnhanced:copy()
+    AVS:FIELD_THRESHOLD(orignEnhanced.Data, finalBubs.Data, 0, highThresh, 1, 0)
     finalBubs:write_xdr(basefolder .. xdrFolder .. xdrName)
     writeTemp.vol = 0
     writeTemp.thr = lowThresh

@@ -321,7 +321,7 @@ function getCal()--find calcifications and write them out to a xdr file
   masked = mask(orign,cHull,0.7)--mask image by shrunk ch
   local hist = masked:histogram(masked,650,3000,3000,256)--get histogram of masked scan
   hist.cumulative = true
-  local lowThresh = hist:percentile(90).value--find 99th percentile pixel value
+  local lowThresh = hist:percentile(97).value*0.75--find 99th percentile pixel value
   --[[if lowThresh<1250 then
     lowThresh=hist:percentile(99.5).value
     if lowThresh<1135 then
