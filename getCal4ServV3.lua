@@ -314,7 +314,7 @@ function getCal()--find calcifications and write them out to a xdr file
       (math.floor(math.abs(spine.Data:pixelsize(1).value)*1000 + 0.5)), 
       (math.floor(math.abs(spine.Data:pixelsize(2).value)*1000 + 0.5)))
     AVS:FIELD_DIVC(f, f, 1000)
-    AVS:FIELD_THRESHOLD(f,spineBigLR.Data, -1000,4)
+    AVS:FIELD_THRESHOLD(f,spineBigLR.Data, -1000,3.5)
     f:clear()
     
     AVS:FIELD_SHIFT(spineBigLR.Data, -2)
