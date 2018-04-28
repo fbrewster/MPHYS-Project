@@ -151,7 +151,7 @@ function bubbleCent (inSc,cHull)--finds the connected pixels and their centres
       log:write("A smaller mask worked" .. "\n")
     end
   end
-  log:write('# of bubbles: ' .. nBubbles .. "\n")--write number of bubbles initally found to log
+  log:write('# of bubbles: ' .. nBubbles .. "\n")--write nuer of bubbles initally found to log
 
   
   for i = 1,nBubbles do
@@ -167,15 +167,13 @@ function bubbleCent (inSc,cHull)--finds the connected pixels and their centres
   
   local output = {}
   local outTot = Scan:new()
-  local tempBubScan = Scan:new()
-  tempBubScan:setup()
   outTot:setup()
   
   for i = 1, #cents do--add all the passed bubble to one scan
     AVS:FIELD_THRESHOLD(labels.Data, temp, cents[i].id, cents[i].id, 255, 0)
     outTot.Data:add(temp)
-    tempBubScan.data=temp
-    output[i] = tempBubScan:copy()
+    output[i] = temp:copy()
+    collectgarbage()
   end
   return cents, outTot, output
 end
@@ -238,7 +236,7 @@ function getCal()--find calcifications and write them out to a xdr file
   local clip = Scan:new()
   clip:setup()
   
-  AVS:FIELD_CLIP(orignEnhanced.data, clip.Data, 1120, 1650)
+  AVS:FIELD_CLIP(orignEnhanced.data, clip.Data, 1135, 1650)
   
   --local blobEnh = clip:objectness(0.3,0.3,1,0)
   --AVS:FIELD_OPS(blobEnh.Data, blobEnh.Data, 2, AVS.FIELD_OPS_Smooth)
@@ -249,23 +247,24 @@ function getCal()--find calcifications and write them out to a xdr file
   --local blobSubt = clip:objectness(4,4,1,1)
   --AVS:FIELD_OPS(blobSubt.Data, blobSubt.Data, 2, AVS.FIELD_OPS_Smooth)
   
-  local plate = clip:objectness(2,2,1,2)
+  local plate = clip:objectness(2.5,2.5,1,2)
   AVS:FIELD_OPS(plate.Data, plate.Data, 3, AVS.FIELD_OPS_Smooth)
   
-  local origF = orignEnhanced:copy()
+  local origF = clip:copy()
   origF.data:tofloat()
   
   local mult = field:new()
   local toMult = field:new()
   local toMultV = field:new()
   local toMultP = field:new()
-  AVS:FIELD_MULC(vess.data,toMultV,enhancementFactor)
-  AVS:FIELD_MULC(plate.data,toMultP,enhancementFactor)
+  AVS:FIELD_MULC(vess.data,toMultV,0.75)
+  AVS:FIELD_MULC(plate.data,toMultP,0.5)
   toMultV:tofloat()
   toMultP:tofloat()
-  --AVS:FIELD_ADDC(toMultBE,toMultBE,(1-enhancementFactor))
+  AVS:FIELD_ADDC(toMultP,toMultP,(1-0.5))
+   AVS:FIELD_ADDC(toMultV,toMultV,(1-0.75))
   AVS:FIELD_ADD(toMultP,toMultV,toMult)
-  AVS:FIELD_ADDC(toMult,toMult,(1-enhancementFactor))
+  --AVS:FIELD_ADDC(toMult,toMult,(1-enhancementFactor))
   
   AVS:FIELD_MUL(toMult,origF.data,mult)
   --AVS:FIELD_MUL(mult,toMultBE,mult)
@@ -274,12 +273,17 @@ function getCal()--find calcifications and write them out to a xdr file
   enhanced.data=mult
   orignEnhanced=enhanced:copy()
   
+  collectgarbage()
+  
   
   --Make convex hull
   local lungCH = Delineation:new()
   local cHull = Scan:new()
+  local lungs = Scan:new()
+  lungs:setup()
   cHull:setup()
-  lungCH,cHull = lungConvexHull(orignEnhanced)
+  lungCH,lungs = lungConvexHull(orignEnhanced)
+  cHull = lungs:copy()
   
 
 
@@ -305,7 +309,7 @@ function getCal()--find calcifications and write them out to a xdr file
       (math.floor(math.abs(spine.Data:pixelsize(1).value)*1000 + 0.5)), 
       2*(math.floor(math.abs(spine.Data:pixelsize(2).value)*1000 + 0.5)))
     AVS:FIELD_DIVC(f, f, 1000)
-    AVS:FIELD_THRESHOLD(f,spineBigAP.Data, -1000,3.3)
+    AVS:FIELD_THRESHOLD(f,spineBigAP.Data, -1000,3.5)
     f:clear()
     
     AVS:FIELD_TO_FLOAT(spine.Data, spine.Data)
@@ -348,24 +352,24 @@ function getCal()--find calcifications and write them out to a xdr file
   --spineInvert.Data:tobyte()
   --cHull.Data:tobyte()
   AVS:FIELD_AND(cHull.Data,spineInvert.Data,cHull.Data)
+  
+  mTrans=orignEnhanced.Transform
+  mAdjust=orignEnhanced.Adjust
 
 
   local masked = Scan:new()
   masked:setup()
-  masked = mask(orign,cHull,0.7)--mask image by shrunk ch
+  masked = mask(orignEnhanced,cHull,0.7)--mask image by shrunk ch
   local hist = masked:histogram(masked,650,3000,3000,256)--get histogram of masked scan
   hist.cumulative = true
-  local lowThresh = hist:percentile(99.75).value*0.8--find 99th percentile pixel value
+  local lowThresh = 1250*1.5--find 99th percentile pixel value
   --[[if lowThresh<1250 then
-    lowThresh=hist:percentile(99.5).value
+    lowThresh=hist:percentile(99.9).value
     if lowThresh<1135 then
       lowThresh=1135
     end
   end]]
-  local highThresh = 1650--find largest pixel value
-  
-  mTrans=orignEnhanced.Transform
-  mAdjust=orignEnhanced.Adjust
+  local highThresh = hist:max().value--find largest pixel value
 
   --threshold into scan 4
   local threshed = Scan:new()
@@ -391,13 +395,18 @@ function getCal()--find calcifications and write them out to a xdr file
   local bubTot = Scan:new()
   bubTot:setup()
   bubs = {}
-  local shcHull = cHull:copy()
+  local shcHull = lungs:copy()
   AVS:FIELD_OPS(shcHull.Data, shcHull.Data, AVS.FIELD_OPS_SignedDist)--make singed distance image
   tempScan = shcHull.Data:copy()
   AVS:FIELD_THRESHOLD(tempScan, shcHull.Data, 197)--shrink it
+  
   cents,bubTot,bubs = bubbleCent(maskSmooth,shcHull:copy())--find bubbles and centres
   collectgarbage()
-  local flood = orignEnhanced:copy()
+  local flood = orign:copy()
+
+  mAdjust = wm.Scan[1].Adjust:copy()
+  mTrans = wm.Scan[1].Transform:copy()
+  
   --local allMask = Scan:new()
   --allMask:setup()
 
@@ -405,24 +414,26 @@ function getCal()--find calcifications and write them out to a xdr file
     local currentBub = bubs[i]:copy()
     local bubMask = Scan:new()
     bubMask:setup()
-    AVS:FIELD_OPS(currentBub.Data, currentBub.Data, 4, AVS.FIELD_OPS_Smooth3)--smooth out mask
-    AVS:FIELD_MASK(orign.Data, currentBub.Data, bubMask.Data)--create window of original scan about bubble
+    AVS:FIELD_OPS(currentBub, currentBub, 4, AVS.FIELD_OPS_Smooth3)--smooth out mask
+    AVS:FIELD_MASK(orign.Data, currentBub, bubMask.Data)--create window of original scan about bubble
     local bubHist = bubMask:histogram(bubMask,650,3000,3000,256)--get histogram of window
     bubHist.cumulative = true
-    local floodThresh = bubHist:percentile(80).value*0.75--find 80th percentile pixel value]]
-    --[[if floodThresh<1100*enh then--if the flood value is too low set it to min cal CT number
+    local floodThresh = bubHist:percentile(85).value--find 80th percentile pixel value]]
+    if floodThresh<1100 then--if the flood value is too low set it to min cal CT number
       floodThresh = 1135*0.75 
-    end]]
+    end
     --allMask:add(bubMask)--add window to total window scan
     
     --local floodThresh=550
     local safe = flood:copy()
-    AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)--floodfill from centre of bubble out to 80th percentile pixel value
+    local thisCent = field:new()
+    AVS:FIELD_CENTER_DOT(bubMask.Data,thisCent)
+    AVS:FLOODFILL(thisCent, flood.Data, floodThresh, 3, 5000)--floodfill from centre of bubble out to 80th percentile pixel value
     
     local bleed = hasBled2(flood)--check for bleed
     if bleed then--if it has bled, try again
       flood = safe:copy()
-      floodThresh = floodThresh*(0.85/0.75)--try with 83rd pixel value
+      floodThresh = floodThresh*(1.1)--try with 83rd pixel value
       AVS:FLOODFILL(cents[i].cent, flood.Data, floodThresh, 3, 5000)--try flooding again
       local bleed2 = hasBled2(flood)--check for bleed
       if bleed2 then--if it has bled again
@@ -457,7 +468,7 @@ function getCal()--find calcifications and write them out to a xdr file
   for i=1,bubFlood.Data:max().value do
     AVS:FIELD_THRESHOLD(bubFlood.Data, thisBub.Data, i, i, val)--take one volume and give it unique pixel value
     if thisBub.Data:max().value>0 and thisBub:volume().value<maxVol and thisBub:volume().value>0.01 then--if the bubble exists and isn't too large
-      local cross=intersect(thisBub:copy(),cHull:copy())
+      local cross=intersect(thisBub:copy(),shcHull:copy())
       if not cross then
         finalBubs:add(thisBub)--add it to the final bubbles
         val = val + 1--move to next pixel value id
